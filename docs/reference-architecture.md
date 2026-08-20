@@ -66,7 +66,11 @@ The current `FFTPlan[dtype]` already combines the validated specification and
 the only available scalar radix-2 implementation. That is appropriate for
 v0.1. The layers should be separated internally only when a second algorithm or
 backend makes selection real. A public `FFTPlanner` before then would expose an
-abstraction with no decision to make.
+abstraction with no decision to make. Even after selection becomes real,
+`FFTPlan(...)` remains the public deterministic planning entry point. The
+planner, transform specification, algorithm selector, and CPU backend policy
+remain internal until a concrete caller requirement proves that exposing one is
+better than adding a narrow constructor or diagnostic.
 
 ## Planner and convenience API
 
@@ -113,9 +117,9 @@ plan.execute_in_place(buffer)
 Plan construction may validate, factor a length, choose a backend and
 algorithm, and precompute immutable data. Execution must not repeat planning.
 Plans are reusable for the exact shape, type, direction, normalization, and
-backend policy with which they were created. Placement remains an execution
-method: one plan may expose both in-place and owned out-of-place paths when its
-selected kernel supports both.
+selected CPU implementation with which they were created. Placement remains an
+execution method: one plan may expose both in-place and owned out-of-place paths
+when its selected kernel supports both.
 
 When general lengths exist, an internal planner should take a value-like
 specification and return a plan containing a selected kernel:
@@ -126,8 +130,14 @@ TransformSpec
   length: positive Int
   direction: forward | inverse
   normalization: none | backward | forward | ortho
-  backend policy: automatic | scalar_cpu | simd_cpu
+  selected CPU family: scalar | supported SIMD family
 ```
+
+`TransformSpec` and the selected-family field are internal records, not root
+exports or caller configuration. Automatic selection always has a scalar
+fallback. Tests and benchmarks may force an internal family, but production
+callers do not acquire an unstable backend-selection API merely to make those
+tests possible.
 
 Normalization is intentionally part of the reusable public plan but not of the
 kernel-selection key unless a measured optimization proves fused scaling
@@ -140,6 +150,57 @@ versioned heuristics. Benchmarked planning can be evaluated later as a separate
 policy because FFTW demonstrates both its power and its costs: planning can be
 slow, mutate planning buffers, depend on the host, and require global wisdom
 and cleanup rules.
+
+### Plan integrity under Mojo 1.0
+
+Mojo 1.0 underscore-prefixed fields remain externally reachable. A reusable
+plan must therefore never rely on the apparent privacy of duplicated mutable
+fields. Once precomputed state exists, `FFTPlan` is a small public façade over
+one package-controlled CPU plan state. Length, direction, selected kernel,
+normalization, twiddle/table dimensions, and scratch requirements have one
+canonical stored representation. Public accessors derive from that state rather
+than keeping independent copies that can drift.
+
+The current scalar plan may retain direct fields only while it has no cached
+kernel or twiddle state: its length is revalidated and every reachable
+direction/normalization bit pattern is meaningful. Extracting the internal
+kernel contract is also the gate for replacing those direct fields with the
+coherent state above.
+
+Before every execution, one complete validation pass proves all of the
+following before input, output, or scratch is mutated:
+
+- the public plan state is structurally valid for its dtype and transform kind;
+- its length, direction, normalization, selected-kernel metadata, and every
+  required twiddle or table dimension agree;
+- the actual input and output lengths match the canonical plan length;
+- the selected placement has enough correctly typed scratch;
+- all required non-aliasing relationships hold; and
+- the selected kernel supports the canonical dtype, length, direction, and
+  placement.
+
+A mismatch raises. Execution does not silently repair the plan, select another
+kernel, or rebuild tables. Raw table storage, unchecked pointers, and device
+resources are not exposed as reachable fields on the public CPU façade. If
+Mojo cannot provide a package-controlled owner that preserves that boundary,
+precomputed state stays in a separately validated safe value and each execution
+checks its structural agreement; an optimized representation is not permitted
+to weaken memory safety.
+
+Internal kernels receive actual buffer lengths alongside validated metadata.
+They use checked indexing or prove bounds from those actual lengths, validate
+every auxiliary table before its first access, and remain bounds-safe if a
+caller corrupts any externally reachable plan field. The public validation is
+the semantic error boundary, not the kernel's only memory-safety boundary.
+
+### Public-surface limit
+
+The root execution surface grows only to `fft`, `ifft`, `FFTPlan`, the existing
+nominal direction/normalization values, and the explicit scratch query/execution
+methods described below. `FFTPlanner`, `TransformSpec`, `PlannedKernel`,
+algorithm names, twiddle storage, backend policy, and CPU feature values remain
+internal. A diagnostics API may later report the selected family without
+letting callers construct invalid combinations.
 
 ## Shape, type, direction, and normalization
 
@@ -215,23 +276,55 @@ Future algorithms may require work space. RustFFT's split between an allocating
 convenience call and execution with caller-provided scratch is adopted in
 principle, with these ShuhaFFT rules:
 
-- the plan reports its exact required scratch element count;
-- a convenience execution may allocate that amount;
-- a low-allocation execution accepts caller-owned scratch and rejects an
-  undersized buffer before mutating input or output;
+- the plan separately reports `in_place_scratch_len()` and
+  `out_of_place_scratch_len()` because placement requirements may differ;
+- counts are measured in `ComplexSIMD[plan dtype, 1]` elements, may be zero,
+  and describe the required prefix rather than an exact caller-list length;
+- a caller may provide more elements than required; an empty list is valid when
+  the reported count is zero and is never accessed;
+- standard Mojo `List` element alignment is sufficient for every public CPU
+  path; SIMD kernels must handle it or fall back internally rather than impose
+  a hidden stronger alignment precondition;
+- an allocating convenience execution may allocate the placement-specific
+  amount;
+- a no-allocation execution accepts caller-owned scratch and rejects an
+  undersized buffer before mutating input, output, or scratch;
 - scratch contents are unspecified after execution;
 - scratch must not alias input or output unless an API explicitly permits it;
+- input and output must not alias for the out-of-place method;
 - an out-of-place input remains unchanged;
 - hidden per-execution allocation is forbidden in an API documented as using
   caller-provided scratch;
 - required scratch may change between library versions, so callers query the
   plan instead of hard-coding it.
 
-Plans own or share immutable twiddles, factorization, selected-kernel metadata,
-and accelerator resources required for repeated execution. Dropping a planner
-must not invalidate a returned plan. Mojo value semantics should be preferred;
-shared storage is introduced only when immutable plan data is large enough to
-justify an explicit ownership type.
+The concrete caller-scratch surface is intentionally small:
+
+```mojo
+plan.execute_in_place_with_scratch(buffer, scratch)
+plan.execute_into(input, output, scratch)
+```
+
+These are architectural method names rather than implemented signatures. Both
+use caller-owned `List[ComplexSIMD[plan dtype, 1]]` storage. `execute_into`
+requires output length exactly equal to the planned length and preserves input.
+Both methods perform no allocation after plan construction. If Mojo cannot
+prove or check the required non-aliasing for a proposed generic buffer type,
+that overload is not added; the initial explicit-scratch API stays on a storage
+type whose ownership contract can be enforced.
+
+CPU plans own or share immutable twiddles, factorization, and selected-kernel
+metadata required for repeated execution. Dropping an internal planner must not
+invalidate a returned plan. Copying a CPU plan either deep-copies this immutable
+state or shares it through an explicit safe owner; dropping or replacing one
+copy never invalidates another. A CPU plan owns no mutable per-execution
+workspace, counters, temporary buffers, or hidden stream state.
+
+CPU execution is reentrant: the same plan and its copies may execute
+concurrently when every input, output, and scratch region is disjoint. Scratch
+is caller-owned per execution. If a future optimization needs mutation, it must
+use local/caller storage or introduce an explicitly synchronized execution
+object rather than making ordinary plan reuse history-dependent.
 
 There is no unbounded global plan cache. A later cache, if benchmarks justify
 one, is opt-in, bounded, keyed by the complete semantic and backend contract,
@@ -260,9 +353,10 @@ the latter style of deterministic cost model, record its thresholds in tests,
 and grow a recipe graph only when composition requires it.
 
 The selector must always have a correctness baseline. Unsupported acceleration
-is not an error when automatic selection can run scalar code. Explicit
-`simd_cpu` selection may raise an availability error rather than silently
-changing the user's requested resource policy.
+is not an error when automatic selection can run scalar code. A forced SIMD
+selector remains internal to tests and benchmarks. A future public resource
+policy requires its own API review and must raise rather than silently changing
+an explicit caller request.
 
 Planner heuristics are implementation details. Tests assert selected families
 only at boundary cases needed to prevent catastrophic complexity; ordinary
@@ -277,7 +371,8 @@ The internal plan boundary should conceptually expose:
 PlannedKernel
   length
   dtype
-  required scratch
+  in-place scratch elements
+  out-of-place scratch elements
   execute in place
   execute out of place
 ```
@@ -289,11 +384,29 @@ data movement, but may not introduce a different sign, scale, ordering, or
 failure contract.
 
 GPU support is a separate backend with the same mathematical specification but
-an explicit device-storage and execution model. A CPU `List` API must not
-silently copy to a GPU. GPU plans should accept device-compatible buffers,
-report device scratch/workspace, bind a device/context explicitly, and surface
-synchronization or launch failures. CPU-only users must not initialize an
-accelerator runtime or import a GPU package.
+an explicit device-storage and execution model. It does not implement or extend
+the CPU `FFTPlan`/`List` methods. A CPU `List` API must not silently copy to a
+GPU. GPU support uses a distinct `GPUFFTPlan`-like resource-owning type and
+device-buffer type, preferably in a separate package or isolated module that
+CPU-only users never import.
+
+GPU plan construction binds one explicit device/context and records compatible
+stream or queue semantics. Device input, output, and workspace must belong to
+that context; cross-device use raises before enqueue. GPU plans are non-copyable
+by default. If an explicit `clone()` is later added, it shares a reference-
+counted context and immutable plan resources, and dropping one clone cannot
+invalidate another or any already-returned completion event. The final owner
+releases resources through normal lifetime semantics without a global cleanup
+call.
+
+Execution names its stream/queue or uses the stream fixed at construction and
+returns a completion event/fence for asynchronous work. A separate explicit
+wait/synchronize operation reports deferred launch errors. No method presents
+as synchronous unless it waits before returning. Device scratch/workspace size,
+alignment, aliasing, lifetime through completion, and reuse-after-event rules
+are queryable from the GPU plan rather than inferred from CPU scratch methods.
+CPU-only users must not initialize an accelerator runtime or import a GPU
+package.
 
 This keeps GPU code from contaminating the CPU API while allowing higher-level
 code to share direction, normalization, shape, and result conventions.
@@ -302,9 +415,25 @@ code to share direction, normalization, shape, and result conventions.
 
 Public fallibility uses `raises`. Invalid lengths, mismatched buffers,
 unsupported dtypes, shape-product overflow, illegal axes/strides, insufficient
-scratch, forbidden aliasing, unavailable explicitly requested backends, and
-resource-creation failures are errors. These are checked before observable
-mutation where practical.
+scratch, forbidden aliasing, incoherent plan/kernel/table state, unavailable
+explicitly requested device resources, and resource-creation failures are
+errors.
+
+Every predictable contract error is checked before observable mutation. This
+includes complete plan coherence, shape, dtype, placement, destination length,
+scratch length/type/alignment, aliasing, and device/context compatibility. CPU
+kernels have no expected fallible step after this validation; floating-point
+NaN or overflow remains data behavior rather than an execution error.
+
+An allocating `execute` never returns a partially valid owned result. If an
+unexpected internal CPU failure occurs after in-place or caller-output mutation,
+the mutated output and scratch contents are unspecified and the error is
+reported; the out-of-place input remains unchanged. GPU enqueue failure before
+work is accepted leaves buffers unchanged. A launch or asynchronous failure
+reported after acceptance leaves destination and workspace contents unspecified
+until the event completes or reports failure; out-of-place input preservation
+still holds. These states are documented by each device API rather than hidden
+behind a generic success value.
 
 Programmer-facing assertions remain internal proofs after public validation;
 they are not a substitute for rejecting reachable invalid public state. Mojo
@@ -319,16 +448,16 @@ updates, provenance, and an opt-in I/O boundary; FFTW wisdom is therefore
 rejected for the near-term design.
 
 Allocation failure and accelerator resource errors propagate without returning
-a partially valid plan. Plans release owned resources through normal Mojo
-lifetime semantics. No public `cleanup()` invalidates unrelated live plans.
+a partially valid plan. Plans release owned resources through the CPU or GPU
+lifetime rules above. No public `cleanup()` invalidates unrelated live plans.
 
 ## Adopted and rejected ideas
 
 ### Adopted
 
 - From RustFFT: a plan selects a kernel, can be reused independently of the
-  planner, and eventually reports scratch requirements; CPU ISA planners stay
-  behind one semantic execution contract.
+  planner, and reports placement-specific scratch requirements; CPU ISA
+  planners stay behind one semantic execution contract.
 - From pocketfft: validate shape/stride/axis relationships together, keep plan
   caching bounded and optional, compute twiddles carefully, and compare a
   factorized algorithm with Bluestein through a deterministic cost model.
@@ -341,9 +470,9 @@ lifetime semantics. No public `cleanup()` invalidates unrelated live plans.
 
 ### Rejected or deferred
 
-- RustFFT's public algorithm constructors and panic-based shape errors are not
-  adopted. ShuhaFFT keeps algorithms internal and reports reachable input
-  errors with `raises`.
+- RustFFT's public algorithm constructors, public ISA-specific planners, and
+  panic-based shape errors are not adopted. ShuhaFFT keeps planners and
+  algorithms internal and reports reachable input errors with `raises`.
 - pocketfft's Boolean direction, raw byte strides, silent thread-count fallback,
   and single header organization are not a public Mojo model.
 - FFTW's GPL source is evidence only. Its global planner, mutable planning
@@ -382,6 +511,9 @@ is enabled.
 - in-place and out-of-place agreement;
 - input preservation and independent output ownership;
 - scratch and plan reuse without history-dependent results;
+- coherent rejection of every reachable plan/kernel/twiddle mismatch before
+  buffer mutation;
+- concurrent CPU-plan reuse with disjoint input/output/scratch storage;
 - exact output length and no mutation after rejected validation;
 - scalar/SIMD/GPU agreement within dtype- and size-specific tolerances;
 - later RFFT Hermitian symmetry, even/odd original-length handling, and packed
@@ -435,13 +567,16 @@ begin until the prior gate is validated on the supported CI matrix.
 2. **Record a scalar baseline.** Add benchmark programs and methodology for
    current plan creation and execution without claiming superiority.
 3. **Extract an internal kernel contract.** Separate validated specification
-   from scalar execution without a public API change; prove behavior with the
-   same suite.
+   from scalar execution without a public API change; move future plan metadata
+   into one coherent state and prove corrupted reachable fields cannot bypass
+   buffer validation or kernel bounds safety.
 4. **Add immutable twiddle planning.** Measure recurrence drift against
-   precomputed, symmetry-reduced twiddles before selecting a representation.
-5. **Add explicit scratch execution.** Introduce scratch queries and
-   caller-provided execution only when an algorithm needs workspace; test
-   undersized and aliased buffers.
+   precomputed, symmetry-reduced twiddles before selecting a representation;
+   validate table/spec/kernel agreement before every first table access.
+5. **Add explicit scratch execution.** Introduce separate in-place/out-of-place
+   scratch queries and the two caller-provided execution methods only when an
+   algorithm needs workspace; test zero/excess/undersized counts, alignment,
+   every forbidden alias, no hidden allocation, and pre-mutation rejection.
 6. **Add scalar general composite lengths.** Land small butterflies and
    mixed-radix composition incrementally, each behind direct-DFT and property
    tests.
@@ -459,8 +594,9 @@ begin until the prior gate is validated on the supported CI matrix.
     recovery before RFFT/IRFFT kernels.
 12. **Add batches, axes, and multidimensional plans.** Establish checked shape,
     stride, aliasing, and ordering semantics before implementation.
-13. **Evaluate a separate GPU backend.** Require explicit device storage and
-    resource semantics; do not alter or initialize the CPU path.
+13. **Evaluate a separate GPU backend.** Require distinct plan/buffer types and
+    explicit context, stream, copy/drop, workspace, event, synchronization, and
+    failure semantics; do not alter or initialize the CPU path.
 14. **Evaluate measured planning and persistent tuning last.** Proceed only if
     deterministic heuristics leave material measured performance and the I/O,
     reproducibility, privacy, and invalidation policies are solved.
