@@ -34,8 +34,25 @@ The Mojo import is `shuhafft`. The eventual Conda distribution is
 `mojo-shuhafft`. Source lives under `src/shuhafft/`, whose
 `__init__.mojo` defines the package boundary.
 
-The current scaffold includes only an internal smoke marker. Nothing is
-re-exported as a stable public API yet.
+The first correctness slice exposes validated scalar CPU radix-2 plans for
+`Float32` and `Float64` complex values:
+
+```mojo
+from shuhafft import ComplexFloat64, FFTDirection, FFTPlan
+
+var samples = List[ComplexFloat64](capacity=4)
+samples.append(ComplexFloat64(1.0))
+samples.append(ComplexFloat64(2.0))
+samples.append(ComplexFloat64(3.0))
+samples.append(ComplexFloat64(4.0))
+var spectrum = FFTPlan[DType.float64](
+    len(samples), FFTDirection.forward()
+).execute(samples)
+```
+
+Lengths must be non-zero powers of two. Backward normalization is the default,
+so forward transforms are unscaled and inverse transforms divide by the length.
+The API is experimental and may change before v0.1.
 
 ## Repository map
 
@@ -47,7 +64,8 @@ re-exported as a stable public API yet.
 - `conda.recipe/`: local Rattler build recipe
 
 See [the architecture](docs/architecture.md), [design principles](docs/design.md),
-and [roadmap](docs/roadmap.md) before proposing a new dependency or feature.
+the [executable v0.1 plan](docs/v0.1-plan.md), and [roadmap](docs/roadmap.md)
+before proposing a new dependency or feature.
 
 ## License
 

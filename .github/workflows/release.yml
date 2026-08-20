@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   check:
-    name: Check ${{ matrix.name }}
+    name: Check and package ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -29,6 +29,8 @@ jobs:
           pixi-version: v0.76.2
           cache: true
       - run: pixi run --locked check
+      - name: Build and test installed Conda package
+        run: pixi run --locked package
 
   publish:
     name: Publish source release

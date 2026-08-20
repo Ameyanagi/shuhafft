@@ -16,6 +16,21 @@ install an application, renderer, language layer, or scientific stack.
 
 Planned implementation areas: direction, normalization, planner-compatible plans, twiddles, complex FFT/IFFT, later real transforms, algorithm kernels, SIMD, and isolated GPU backends.
 
+The current correctness slice has four concrete layers:
+
+```text
+package root
+    -> FFTPlan (validation, ownership and scaling contract)
+        -> internal scalar radix-2 kernel
+            -> Mojo standard ComplexSIMD and math primitives
+```
+
+`FFTDirection` and `FFTNormalization` are backend-independent nominal values.
+`FFTPlan` is the future backend seam: optimized implementations may replace
+the scalar kernel, but they must preserve its validation, sign, scaling,
+in-place, and out-of-place behavior. Backend selection is deliberately absent
+until there is a second implementation to select.
+
 The package root exports only the small documented public surface. Algorithms,
 generated tables, platform details, and backend implementations remain in
 their owning modules. Generic Mojo-native buffers, spans, strings, and
