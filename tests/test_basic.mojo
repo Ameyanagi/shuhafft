@@ -169,6 +169,48 @@ def test_normalization_modes_scale_transform_execution() raises:
         _assert_complex64(ortho_round_trip[index], values[index].re, values[index].im)
 
 
+def test_float32_normalization_modes_scale_transform_execution() raises:
+    # An origin delta has the same unscaled value in every output bin, making
+    # every direction/convention combination an exact scaling reference.
+    var values = List[ComplexFloat32](length=4, fill=ComplexFloat32(0.0))
+    values[0] = ComplexFloat32(2.0, -1.0)
+
+    var none_forward = FFTPlan[DType.float32](
+        4, FFTDirection.forward(), FFTNormalization.none()
+    ).execute(values)
+    var none_inverse = FFTPlan[DType.float32](
+        4, FFTDirection.inverse(), FFTNormalization.none()
+    ).execute(values)
+    var backward_forward = FFTPlan[DType.float32](
+        4, FFTDirection.forward(), FFTNormalization.backward()
+    ).execute(values)
+    var backward_inverse = FFTPlan[DType.float32](
+        4, FFTDirection.inverse(), FFTNormalization.backward()
+    ).execute(values)
+    var forward_forward = FFTPlan[DType.float32](
+        4, FFTDirection.forward(), FFTNormalization.forward()
+    ).execute(values)
+    var forward_inverse = FFTPlan[DType.float32](
+        4, FFTDirection.inverse(), FFTNormalization.forward()
+    ).execute(values)
+    var ortho_forward = FFTPlan[DType.float32](
+        4, FFTDirection.forward(), FFTNormalization.ortho()
+    ).execute(values)
+    var ortho_inverse = FFTPlan[DType.float32](
+        4, FFTDirection.inverse(), FFTNormalization.ortho()
+    ).execute(values)
+
+    for index in range(4):
+        _assert_complex32(none_forward[index], 2.0, -1.0)
+        _assert_complex32(none_inverse[index], 2.0, -1.0)
+        _assert_complex32(backward_forward[index], 2.0, -1.0)
+        _assert_complex32(backward_inverse[index], 0.5, -0.25)
+        _assert_complex32(forward_forward[index], 0.5, -0.25)
+        _assert_complex32(forward_inverse[index], 2.0, -1.0)
+        _assert_complex32(ortho_forward[index], 1.0, -0.5)
+        _assert_complex32(ortho_inverse[index], 1.0, -0.5)
+
+
 def test_float32_complex_round_trip_in_place() raises:
     var original = List[ComplexFloat32](capacity=8)
     original.append(ComplexFloat32(1.0, -0.5))
@@ -188,21 +230,62 @@ def test_float32_complex_round_trip_in_place() raises:
         _assert_complex32(values[index], original[index].re, original[index].im)
 
 
-def test_float64_shifted_impulse_reference() raises:
-    # A unit impulse at n=1 transforms to exp(-2*pi*i*k/8), validating all
-    # output bins and the three-stage bit-reversal/butterfly ordering.
+def test_float32_shifted_impulse_forward_inverse_reference() raises:
+    # Direct references make the opposite forward/inverse phase signs visible;
+    # default backward normalization contributes 1/8 to the inverse result.
+    var values = List[ComplexFloat32](length=8, fill=ComplexFloat32(0.0))
+    values[1] = ComplexFloat32(1.0)
+    var forward = FFTPlan[DType.float32](8, FFTDirection.forward()).execute(values)
+    var inverse = FFTPlan[DType.float32](8, FFTDirection.inverse()).execute(values)
+    var root_half = Float32(0.707106781186547524400844362105)
+    var scaled_root_half = root_half / 8.0
+
+    _assert_complex32(forward[0], 1.0, 0.0)
+    _assert_complex32(forward[1], root_half, -root_half)
+    _assert_complex32(forward[2], 0.0, -1.0)
+    _assert_complex32(forward[3], -root_half, -root_half)
+    _assert_complex32(forward[4], -1.0, 0.0)
+    _assert_complex32(forward[5], -root_half, root_half)
+    _assert_complex32(forward[6], 0.0, 1.0)
+    _assert_complex32(forward[7], root_half, root_half)
+
+    _assert_complex32(inverse[0], 0.125, 0.0)
+    _assert_complex32(inverse[1], scaled_root_half, scaled_root_half)
+    _assert_complex32(inverse[2], 0.0, 0.125)
+    _assert_complex32(inverse[3], -scaled_root_half, scaled_root_half)
+    _assert_complex32(inverse[4], -0.125, 0.0)
+    _assert_complex32(inverse[5], -scaled_root_half, -scaled_root_half)
+    _assert_complex32(inverse[6], 0.0, -0.125)
+    _assert_complex32(inverse[7], scaled_root_half, -scaled_root_half)
+
+
+def test_float64_shifted_impulse_forward_inverse_reference() raises:
+    # Validate all bins, inverse phase signs, and the three-stage
+    # bit-reversal/butterfly ordering directly rather than through a round trip.
     var values = List[ComplexFloat64](length=8, fill=ComplexFloat64(0.0))
     values[1] = ComplexFloat64(1.0)
-    var result = FFTPlan[DType.float64](8, FFTDirection.forward()).execute(values)
+    var forward = FFTPlan[DType.float64](8, FFTDirection.forward()).execute(values)
+    var inverse = FFTPlan[DType.float64](8, FFTDirection.inverse()).execute(values)
     var root_half = Float64(0.707106781186547524400844362105)
-    _assert_complex64(result[0], 1.0, 0.0)
-    _assert_complex64(result[1], root_half, -root_half)
-    _assert_complex64(result[2], 0.0, -1.0)
-    _assert_complex64(result[3], -root_half, -root_half)
-    _assert_complex64(result[4], -1.0, 0.0)
-    _assert_complex64(result[5], -root_half, root_half)
-    _assert_complex64(result[6], 0.0, 1.0)
-    _assert_complex64(result[7], root_half, root_half)
+    var scaled_root_half = root_half / 8.0
+
+    _assert_complex64(forward[0], 1.0, 0.0)
+    _assert_complex64(forward[1], root_half, -root_half)
+    _assert_complex64(forward[2], 0.0, -1.0)
+    _assert_complex64(forward[3], -root_half, -root_half)
+    _assert_complex64(forward[4], -1.0, 0.0)
+    _assert_complex64(forward[5], -root_half, root_half)
+    _assert_complex64(forward[6], 0.0, 1.0)
+    _assert_complex64(forward[7], root_half, root_half)
+
+    _assert_complex64(inverse[0], 0.125, 0.0)
+    _assert_complex64(inverse[1], scaled_root_half, scaled_root_half)
+    _assert_complex64(inverse[2], 0.0, 0.125)
+    _assert_complex64(inverse[3], -scaled_root_half, scaled_root_half)
+    _assert_complex64(inverse[4], -0.125, 0.0)
+    _assert_complex64(inverse[5], -scaled_root_half, -scaled_root_half)
+    _assert_complex64(inverse[6], 0.0, -0.125)
+    _assert_complex64(inverse[7], scaled_root_half, -scaled_root_half)
 
 
 def test_float64_sixty_four_point_round_trip() raises:

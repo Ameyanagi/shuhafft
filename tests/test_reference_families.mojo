@@ -51,10 +51,15 @@ def test_float64_delta_inverse_dual_and_plan_reuse() raises:
     for index in range(1, 32):
         _assert_complex64(restored[index], 0.0, 0.0)
 
-    first_spectrum[7] = ComplexFloat64(99.0, 101.0)
     var second_spectrum = forward.execute(delta)
     for index in range(32):
         _assert_complex64(second_spectrum[index], 2.25, -0.75)
+
+    # Mutate a completed result only after all executions. Neither the later
+    # result nor the inverse result may share its backing storage.
+    first_spectrum[7] = ComplexFloat64(99.0, 101.0)
+    _assert_complex64(second_spectrum[7], 2.25, -0.75)
+    _assert_complex64(restored[7], 0.0, 0.0)
     _assert_complex64(delta[0], 2.25, -0.75)
     for index in range(1, 32):
         _assert_complex64(delta[index], 0.0, 0.0)
