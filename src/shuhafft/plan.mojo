@@ -1,6 +1,7 @@
 """Validated FFT plans and public execution contracts."""
 
 from std.complex import ComplexSIMD
+from std.math import cos, sin
 
 from ._radix2 import _radix2_in_place
 from .direction import FFTDirection
@@ -24,6 +25,11 @@ struct FFTPlan[dtype: DType](Copyable, Movable) where dtype.is_floating_point():
     var _size: Int
     var _direction: FFTDirection
     var _normalization: FFTNormalization
+    # Stage half-width `half` starts at flat index `half - 1`, with `half`
+    # contiguous entries. Thus stages cover [0, size - 1) without gaps.
+    var _twiddle_re: List[Scalar[Self.dtype]]
+    var _twiddle_im: List[Scalar[Self.dtype]]
+    var _bit_reversal: List[Int]
 
     def __init__(
         out self,
@@ -39,11 +45,42 @@ struct FFTPlan[dtype: DType](Copyable, Movable) where dtype.is_floating_point():
         self._size = size
         self._direction = direction
         self._normalization = normalization
+        self._twiddle_re = List[Scalar[Self.dtype]](capacity=size - 1)
+        self._twiddle_im = List[Scalar[Self.dtype]](capacity=size - 1)
+        self._bit_reversal = List[Int](length=size, fill=0)
+
+        var sign = Scalar[Self.dtype](1.0 if direction.is_inverse() else -1.0)
+        var two_pi = Scalar[Self.dtype](6.283185307179586476925286766559)
+        var stage_size = 2
+        while stage_size <= size:
+            var half = stage_size // 2
+            for offset in range(half):
+                var angle = (
+                    sign
+                    * two_pi
+                    * Scalar[Self.dtype](offset)
+                    / Scalar[Self.dtype](stage_size)
+                )
+                self._twiddle_re.append(cos(angle))
+                self._twiddle_im.append(sin(angle))
+            stage_size *= 2
+
+        var reversed_index = 0
+        for index in range(1, size):
+            var bit = size // 2
+            while reversed_index & bit:
+                reversed_index ^= bit
+                bit //= 2
+            reversed_index ^= bit
+            self._bit_reversal[index] = reversed_index
 
     def __init__(out self, *, copy: Self):
         self._size = copy._size
         self._direction = copy._direction
         self._normalization = copy._normalization
+        self._twiddle_re = List[Scalar[Self.dtype]](copy=copy._twiddle_re)
+        self._twiddle_im = List[Scalar[Self.dtype]](copy=copy._twiddle_im)
+        self._bit_reversal = List[Int](copy=copy._bit_reversal)
 
     def size(self) -> Int:
         """Return the exact number of complex values accepted by this plan."""
@@ -61,6 +98,12 @@ struct FFTPlan[dtype: DType](Copyable, Movable) where dtype.is_floating_point():
         """Validate the stored plan invariants explicitly."""
         if not _is_power_of_two(self._size):
             raise Error("FFT plan length must remain a non-zero power of two")
+        if (
+            len(self._twiddle_re) != self._size - 1
+            or len(self._twiddle_im) != self._size - 1
+            or len(self._bit_reversal) != self._size
+        ):
+            raise Error("FFT plan tables must match the plan length")
 
     def _validate_input_length(self, input_length: Int) raises:
         if input_length != self._size:
@@ -79,7 +122,7 @@ struct FFTPlan[dtype: DType](Copyable, Movable) where dtype.is_floating_point():
     def execute_in_place(self, mut values: List[ComplexSIMD[Self.dtype, 1]]) raises:
         """Transform `values` in place without changing its length."""
         self._validate_input_length(len(values))
-        _radix2_in_place(values, self._direction)
+        _radix2_in_place(values, self._twiddle_re, self._twiddle_im, self._bit_reversal)
         var scale = self._normalization.factor[Self.dtype](self._direction, self._size)
         if scale != Scalar[Self.dtype](1.0):
             for index in range(self._size):

@@ -116,6 +116,38 @@ def test_plan_validate_provides_explicit_invariant_checkpoint() raises:
     with assert_raises(contains="must remain a non-zero power of two"):
         plan.validate()
 
+    var plan_with_missing_table = FFTPlan[DType.float64](4, FFTDirection.forward())
+    plan_with_missing_table._twiddle_im = List[Float64]()
+    with assert_raises(contains="tables must match"):
+        plan_with_missing_table.validate()
+
+
+def test_plan_precomputed_state_layout_and_copy_independence() raises:
+    var plan = FFTPlan[DType.float64](8, FFTDirection.forward())
+    assert_true(len(plan._twiddle_re) == 7)
+    assert_true(len(plan._twiddle_im) == 7)
+    assert_true(len(plan._bit_reversal) == 8)
+    # The stage-size-4 table starts at half - 1 = 1.
+    assert_almost_equal(plan._twiddle_re[1], 1.0)
+    assert_almost_equal(plan._twiddle_im[1], 0.0)
+    assert_almost_equal(plan._twiddle_re[2], 0.0, atol=1e-15)
+    assert_almost_equal(plan._twiddle_im[2], -1.0)
+    var expected_permutation: List[Int] = [0, 4, 2, 6, 1, 5, 3, 7]
+    for index in range(8):
+        assert_true(plan._bit_reversal[index] == expected_permutation[index])
+
+    var plan_copy = FFTPlan[DType.float64](copy=plan)
+    plan_copy._twiddle_re[0] = 2.0
+    plan_copy._bit_reversal[0] = 7
+    assert_almost_equal(plan._twiddle_re[0], 1.0)
+    assert_true(plan._bit_reversal[0] == 0)
+
+    var singleton = FFTPlan[DType.float64](1, FFTDirection.forward())
+    assert_true(len(singleton._twiddle_re) == 0)
+    assert_true(len(singleton._twiddle_im) == 0)
+    assert_true(len(singleton._bit_reversal) == 1)
+    assert_true(singleton._bit_reversal[0] == 0)
+
 
 def test_float64_four_point_reference_and_input_preservation() raises:
     # DFT([1, 2, 3, 4]) = [10, -2+2i, -2, -2-2i].
@@ -287,7 +319,7 @@ def test_float64_shifted_impulse_forward_inverse_reference() raises:
 
 
 def test_float64_sixty_four_point_round_trip() raises:
-    # Exercise six butterfly stages and recursively generated twiddles with a
+    # Exercise six butterfly stages and plan-owned twiddle tables with a
     # deterministic, non-symmetric complex fixture.
     var original = List[ComplexFloat64](capacity=64)
     for index in range(64):

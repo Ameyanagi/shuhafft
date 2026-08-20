@@ -100,29 +100,20 @@ def _relative_l2_round_trip_error[
 
 def _float64_tight_bound(size: Int) -> Float64:
     # Calibration finalized with K = 4 for both dtypes on 2026-08-21 from the
-    # host (osx-arm64, Mojo 1.0.0). Measured relative L2 errors (n:error):
+    # host (osx-arm64, Mojo 1.0.0). Pre-Milestone-2 measured relative L2 errors
+    # with multiplicative twiddle recurrence (n:error):
     #   forward   f64  4:1.13e-16  8:1.63e-16  64:6.11e-16
     #                  256:1.89e-15  4096:2.90e-14
     #   forward   f32  4:4.76e-08  64:3.34e-07  512:1.80e-06
     #   round-trip f64 4:5.24e-17  8:1.67e-16  64:7.99e-16
     #                  256:3.13e-15  4096:4.80e-14  16384:2.16e-13
     #   round-trip f32 4:3.31e-08  64:5.02e-07  512:2.69e-06
+    # Milestone 2 replaced the recurrence with plan-owned direct twiddle tables.
     return 4.0 * log2(Float64(size)) * 2.220446049250313e-16
 
 
 def _float32_tight_bound(size: Int) -> Float64:
     return 4.0 * log2(Float64(size)) * 1.1920928955078125e-7
-
-
-def _float64_temporary_recurrence_bound(size: Int) -> Float64:
-    var tight_bound = _float64_tight_bound(size)
-    # TEMPORARY(M2): per-execute twiddle recurrence drifts at large n; measured
-    # rel L2 errors 2.90e-14 (fwd 4096), 4.80e-14 (rt 4096), 2.16e-13 (rt 16384)
-    # exceed the tight 4*log2(n)*eps bound. Remove this loosening when plan-owned
-    # precomputed twiddle tables land (Milestone 2).
-    if size == 4096 or size == 16384:
-        return 32.0 * tight_bound
-    return tight_bound
 
 
 def _report_error(
@@ -152,7 +143,7 @@ def test_float64_forward_against_naive_dft() raises:
             size, FFTDirection.forward(), FFTNormalization.backward()
         ).execute(values)
         var error = _relative_l2_oracle_error(actual, expected)
-        var bound = _float64_temporary_recurrence_bound(size)
+        var bound = _float64_tight_bound(size)
         _report_error("forward", "float64", size, error, bound)
         errors.append(error)
         bounds.append(bound)
@@ -190,7 +181,7 @@ def test_float64_backward_normalized_round_trip() raises:
             size, FFTDirection.inverse(), FFTNormalization.backward()
         ).execute(spectrum)
         var error = _relative_l2_round_trip_error(restored, original)
-        var bound = _float64_temporary_recurrence_bound(size)
+        var bound = _float64_tight_bound(size)
         _report_error("round-trip", "float64", size, error, bound)
         errors.append(error)
         bounds.append(bound)
