@@ -16,10 +16,13 @@ struct RealFFTPlan[dtype: DType](
 
     The dtype must be `DType.float32` or `DType.float64`, and the real sample
     count must be a power of two at least 2. Forward output contains exactly
-    `n // 2 + 1` bins in DC-first ascending-frequency order: bin `k`
-    represents `k * (sample_rate / n)`, through the Nyquist bin at `n // 2`.
-    Direct mutation of underscore-prefixed fields is out of contract; call
-    `validate()` for an explicit invariant checkpoint after unusual operations.
+    `n // 2 + 1` bins, DC through Nyquist inclusive, in DC-first ascending
+    frequency order; bin `k` represents `k * sample_rate / n`. Forward sets
+    DC and Nyquist imaginary parts to exactly zero, while inverse ignores any
+    nonzero imaginaries there, matching `scipy.fft.irfft`. With the default
+    `FFTNormalization.BACKWARD`, `inverse(forward(x)) == x`. Direct mutation
+    of underscore-prefixed fields is out of contract; call `validate()` for
+    an explicit invariant checkpoint after unusual operations.
     """
 
     var _size: Int
@@ -193,9 +196,11 @@ struct RealFFTPlan[dtype: DType](
     ) raises -> List[ComplexSIMD[Self.dtype, 1]]:
         """Return the compact real-input spectrum in DC-first bin order.
 
-        The result has exactly `n // 2 + 1` ascending-frequency bins, where
-        bin `k` represents `k * (sample_rate / n)`. The DC and Nyquist bins
-        always have exactly-zero imaginary parts.
+        The result contains `n // 2 + 1` ascending-frequency bins, DC through
+        Nyquist inclusive; bin `k` represents `k * sample_rate / n`. DC and
+        Nyquist have exactly-zero imaginary parts, and inverse ignores any
+        nonzero imaginaries there. With `FFTNormalization.BACKWARD`,
+        `inverse(forward(x)) == x`.
         """
         self._validate_signal_length(len(signal))
         var spectrum = List[ComplexSIMD[Self.dtype, 1]](
@@ -213,8 +218,11 @@ struct RealFFTPlan[dtype: DType](
         """Write a compact DC-first spectrum using the output as workspace.
 
         `signal` must contain `n` samples and `spectrum` must contain exactly
-        `n // 2 + 1` bins. No scratch storage is allocated. The imaginary parts
-        of DC and Nyquist are assigned the literal zero after recombination.
+        `n // 2 + 1` ascending-frequency bins, DC through Nyquist; bin `k` is
+        `k * sample_rate / n`. No scratch storage is allocated. DC and Nyquist
+        imaginaries are assigned literal zero, and inverse ignores nonzero
+        values there. With `FFTNormalization.BACKWARD`, passing this output to
+        `inverse_into` reconstructs `signal`.
         """
         self._validate_signal_length(len(signal))
         self._validate_spectrum_length(len(spectrum))
@@ -267,9 +275,12 @@ struct RealFFTPlan[dtype: DType](
     ) raises -> List[Scalar[Self.dtype]]:
         """Return `n` real samples reconstructed from a compact spectrum.
 
-        Input bins are interpreted in DC-first ascending-frequency order and
-        must number exactly `n // 2 + 1`. Any imaginary components supplied at
-        DC or Nyquist are ignored, matching `scipy.fft.irfft` behavior.
+        Input contains exactly `n // 2 + 1` bins, DC through Nyquist inclusive,
+        in ascending-frequency order; bin `k` represents
+        `k * sample_rate / n`. Forward writes exactly-zero DC and Nyquist
+        imaginaries, and inverse ignores any nonzero values supplied there,
+        matching `scipy.fft.irfft`. With `FFTNormalization.BACKWARD`,
+        `inverse(forward(x)) == x`.
         """
         self._validate_spectrum_length(len(spectrum))
         var signal = List[Scalar[Self.dtype]](
@@ -285,10 +296,12 @@ struct RealFFTPlan[dtype: DType](
     ) raises:
         """Write `n` real samples reconstructed from a compact spectrum.
 
-        `spectrum` must contain exactly `n // 2 + 1` DC-first bins and `signal`
-        must contain exactly `n` samples. Imaginary components at DC and
-        Nyquist are deliberately ignored. This Mojo 1.0 implementation uses
-        one local `n // 2` complex workspace because scalar `List` storage
+        `spectrum` contains `n // 2 + 1` ascending-frequency bins, DC through
+        Nyquist; bin `k` is `k * sample_rate / n`. `signal` must contain exactly
+        `n` samples. Forward writes literal-zero DC and Nyquist imaginaries;
+        inverse ignores nonzero values there. With `FFTNormalization.BACKWARD`,
+        `inverse_into(forward(x))` reconstructs `x`. This Mojo 1.0 implementation
+        uses one local `n // 2` complex workspace because scalar `List` storage
         cannot be safely reinterpreted as complex values.
         """
         self._validate_spectrum_length(len(spectrum))
