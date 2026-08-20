@@ -52,8 +52,6 @@ def test_direction_and_normalization_contracts() raises:
     )
     assert_almost_equal(FFTNormalization.ortho().factor[DType.float64](forward, 4), 0.5)
     assert_almost_equal(FFTNormalization.none().factor[DType.float64](inverse, 4), 1.0)
-    with assert_raises(contains="must be positive"):
-        _ = FFTNormalization.backward().factor[DType.float64](inverse, 0)
 
 
 def test_every_mutated_normalization_representation_is_valid() raises:
@@ -111,12 +109,12 @@ def test_plan_rejects_mismatched_input() raises:
         plan.execute_in_place(values)
 
 
-def test_mutated_plan_length_is_revalidated_before_execution() raises:
+def test_plan_validate_provides_explicit_invariant_checkpoint() raises:
     var plan = FFTPlan[DType.float64](4, FFTDirection.forward())
+    plan.validate()
     plan._size = 3
-    var values = List[ComplexFloat64](length=3, fill=ComplexFloat64(1.0))
     with assert_raises(contains="must remain a non-zero power of two"):
-        plan.execute_in_place(values)
+        plan.validate()
 
 
 def test_float64_four_point_reference_and_input_preservation() raises:

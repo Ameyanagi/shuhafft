@@ -16,7 +16,9 @@ struct FFTPlan[dtype: DType](Copyable, Movable) where dtype.is_floating_point():
 
     The dtype must be `DType.float32` or `DType.float64`. The plan length must
     be a non-zero power of two. A plan can execute repeatedly and forms the
-    semantic seam for future optimized backends.
+    semantic seam for future optimized backends. Direct mutation of
+    underscore-prefixed fields is out of contract; call `validate()` for an
+    explicit invariant checkpoint after unusual operations.
     """
 
     var _size: Int
@@ -55,12 +57,12 @@ struct FFTPlan[dtype: DType](Copyable, Movable) where dtype.is_floating_point():
         """Return this plan's normalization convention."""
         return self._normalization
 
-    def _validate_execution(self, input_length: Int) raises:
-        # Mojo 1.0 fields remain externally reachable. Revalidate the stored
-        # length at every execution boundary so direct mutation cannot feed
-        # unsafe state to the radix-2 kernel.
+    def validate(self) raises:
+        """Validate the stored plan invariants explicitly."""
         if not _is_power_of_two(self._size):
             raise Error("FFT plan length must remain a non-zero power of two")
+
+    def _validate_input_length(self, input_length: Int) raises:
         if input_length != self._size:
             raise Error("input length does not match FFT plan length")
 
@@ -69,14 +71,14 @@ struct FFTPlan[dtype: DType](Copyable, Movable) where dtype.is_floating_point():
     ) raises -> List[ComplexSIMD[Self.dtype, 1]]:
         """Return a transformed deep copy while preserving `values`."""
         # Validate before allocating and copying the out-of-place result.
-        self._validate_execution(len(values))
+        self._validate_input_length(len(values))
         var output = List[ComplexSIMD[Self.dtype, 1]](copy=values)
         self.execute_in_place(output)
         return output^
 
     def execute_in_place(self, mut values: List[ComplexSIMD[Self.dtype, 1]]) raises:
         """Transform `values` in place without changing its length."""
-        self._validate_execution(len(values))
+        self._validate_input_length(len(values))
         _radix2_in_place(values, self._direction)
         var scale = self._normalization.factor[Self.dtype](self._direction, self._size)
         if scale != Scalar[Self.dtype](1.0):

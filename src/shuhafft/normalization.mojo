@@ -45,12 +45,11 @@ struct FFTNormalization(Equatable, TrivialRegisterPassable):
 
     def factor[
         dtype: DType
-    ](self, direction: FFTDirection, size: Int) raises -> Scalar[
+    ](self, direction: FFTDirection, size: Int) -> Scalar[
         dtype
     ] where dtype.is_floating_point():
         """Return the multiplicative scale for a validated transform length."""
-        if size <= 0:
-            raise Error("normalization length must be positive")
+        debug_assert(size > 0, "normalization length must be positive")
         var one = Scalar[dtype](1.0)
         var n = Scalar[dtype](size)
         if self._scale_forward and self._scale_inverse:
