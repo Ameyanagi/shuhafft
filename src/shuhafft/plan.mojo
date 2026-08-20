@@ -12,7 +12,9 @@ def _is_power_of_two(value: Int) -> Bool:
     return value > 0 and (value & (value - 1)) == 0
 
 
-struct FFTPlan[dtype: DType](Copyable, Movable) where dtype.is_floating_point():
+struct FFTPlan[dtype: DType](
+    Copyable, Equatable, Movable, Writable
+) where dtype.is_floating_point():
     """A validated scalar CPU radix-2 complex transform plan.
 
     The dtype must be `DType.float32` or `DType.float64`. The plan length must
@@ -35,13 +37,35 @@ struct FFTPlan[dtype: DType](Copyable, Movable) where dtype.is_floating_point():
         out self,
         size: Int,
         direction: FFTDirection,
-        normalization: FFTNormalization = FFTNormalization.backward(),
+        normalization: FFTNormalization = FFTNormalization.BACKWARD,
     ) raises:
         comptime assert (
             Self.dtype == DType.float32 or Self.dtype == DType.float64
         ), "FFTPlan supports only float32 and float64 in v0.1"
+        if size <= 0:
+            raise Error(
+                String(
+                    "FFT length must be a non-zero power of two; got ",
+                    size,
+                    "; the smallest valid length is 1",
+                )
+            )
         if not _is_power_of_two(size):
-            raise Error("FFT length must be a non-zero power of two")
+            var lower = 1
+            while lower * 2 < size:
+                lower *= 2
+            var higher = lower * 2
+            raise Error(
+                String(
+                    "FFT length must be a non-zero power of two; got ",
+                    size,
+                    " (nearest are ",
+                    lower,
+                    " and ",
+                    higher,
+                    ")",
+                )
+            )
         self._size = size
         self._direction = direction
         self._normalization = normalization
@@ -94,6 +118,32 @@ struct FFTPlan[dtype: DType](Copyable, Movable) where dtype.is_floating_point():
         """Return this plan's normalization convention."""
         return self._normalization
 
+    def __eq__(self, other: Self) -> Bool:
+        return (
+            self._size == other._size
+            and self._direction == other._direction
+            and self._normalization == other._normalization
+        )
+
+    def __ne__(self, other: Self) -> Bool:
+        return not self == other
+
+    def __str__(self) -> String:
+        var result = String()
+        self.write_to(result)
+        return result^
+
+    def write_to[W: Writer](self, mut writer: W):
+        writer.write(
+            "FFTPlan(size=",
+            self._size,
+            ", ",
+            self._direction,
+            ", ",
+            self._normalization,
+            ")",
+        )
+
     def validate(self) raises:
         """Validate the stored plan invariants explicitly."""
         if not _is_power_of_two(self._size):
@@ -107,15 +157,23 @@ struct FFTPlan[dtype: DType](Copyable, Movable) where dtype.is_floating_point():
 
     def _validate_input_length(self, input_length: Int) raises:
         if input_length != self._size:
-            raise Error("input length does not match FFT plan length")
+            raise Error(
+                String(
+                    "input length ",
+                    input_length,
+                    " does not match FFT plan length ",
+                    self._size,
+                )
+            )
 
     def execute(
-        self, values: List[ComplexSIMD[Self.dtype, 1]]
+        self, values: Span[ComplexSIMD[Self.dtype, 1], _]
     ) raises -> List[ComplexSIMD[Self.dtype, 1]]:
         """Return a transformed deep copy while preserving `values`."""
         # Validate before allocating and copying the out-of-place result.
         self._validate_input_length(len(values))
-        var output = List[ComplexSIMD[Self.dtype, 1]](copy=values)
+        var output = List[ComplexSIMD[Self.dtype, 1]](capacity=len(values))
+        output.extend(values)
         self.execute_in_place(output)
         return output^
 

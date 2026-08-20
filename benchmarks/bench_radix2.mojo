@@ -15,9 +15,7 @@ comptime _LCG_SEED = UInt64(0x5A17_C0DE)
 
 def _lcg_sample(mut state: UInt64) -> Float64:
     # Numerical Recipes LCG: state = 1664525 * state + 1013904223 (mod 2^32).
-    state = (state * UInt64(1_664_525) + UInt64(1_013_904_223)) % UInt64(
-        4_294_967_296
-    )
+    state = (state * UInt64(1_664_525) + UInt64(1_013_904_223)) % UInt64(4_294_967_296)
     return Float64(state) / 2147483647.5 - 1.0
 
 
@@ -49,9 +47,7 @@ def _run_cell[
 ](dtype_name: StringLiteral, size: Int) raises where dtype.is_floating_point():
     var values = _random_values[dtype](size)
     # The reusable plan and input buffer are constructed outside all timings.
-    var plan = FFTPlan[dtype](
-        size, FFTDirection.forward(), FFTNormalization.backward()
-    )
+    var plan = FFTPlan[dtype](size, FFTDirection.FORWARD, FFTNormalization.BACKWARD)
     var iterations = _ITERATION_BUDGET // size
     debug_assert(iterations % _TRANSFORMS_PER_BLOCK == 0, "incomplete timing block")
 

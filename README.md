@@ -46,7 +46,7 @@ samples.append(ComplexFloat64(2.0))
 samples.append(ComplexFloat64(3.0))
 samples.append(ComplexFloat64(4.0))
 var spectrum = FFTPlan[DType.float64](
-    len(samples), FFTDirection.forward()
+    len(samples), FFTDirection.FORWARD
 ).execute(samples)
 ```
 

@@ -138,9 +138,9 @@ def test_float64_forward_against_naive_dft() raises:
     var bounds = List[Float64]()
     for size in [4, 8, 64, 256, 4096]:
         var values = _random_values[DType.float64](size, UInt64(0x64D0F7A1))
-        var expected = _naive_dft(values, FFTDirection.forward())
+        var expected = _naive_dft(values, FFTDirection.FORWARD)
         var actual = FFTPlan[DType.float64](
-            size, FFTDirection.forward(), FFTNormalization.backward()
+            size, FFTDirection.FORWARD, FFTNormalization.BACKWARD
         ).execute(values)
         var error = _relative_l2_oracle_error(actual, expected)
         var bound = _float64_tight_bound(size)
@@ -156,9 +156,9 @@ def test_float32_forward_against_naive_dft() raises:
     var bounds = List[Float64]()
     for size in [4, 64, 512]:
         var values = _random_values[DType.float32](size, UInt64(0x32D0F7A1))
-        var expected = _naive_dft(values, FFTDirection.forward())
+        var expected = _naive_dft(values, FFTDirection.FORWARD)
         var actual = FFTPlan[DType.float32](
-            size, FFTDirection.forward(), FFTNormalization.backward()
+            size, FFTDirection.FORWARD, FFTNormalization.BACKWARD
         ).execute(values)
         var error = _relative_l2_oracle_error(actual, expected)
         var bound = _float32_tight_bound(size)
@@ -175,10 +175,10 @@ def test_float64_backward_normalized_round_trip() raises:
     for size in [4, 8, 64, 256, 4096, 16384]:
         var original = _random_values[DType.float64](size, UInt64(0x64BACC01))
         var spectrum = FFTPlan[DType.float64](
-            size, FFTDirection.forward(), FFTNormalization.backward()
+            size, FFTDirection.FORWARD, FFTNormalization.BACKWARD
         ).execute(original)
         var restored = FFTPlan[DType.float64](
-            size, FFTDirection.inverse(), FFTNormalization.backward()
+            size, FFTDirection.INVERSE, FFTNormalization.BACKWARD
         ).execute(spectrum)
         var error = _relative_l2_round_trip_error(restored, original)
         var bound = _float64_tight_bound(size)
@@ -195,10 +195,10 @@ def test_float32_backward_normalized_round_trip() raises:
     for size in [4, 64, 512]:
         var original = _random_values[DType.float32](size, UInt64(0x32BACC01))
         var spectrum = FFTPlan[DType.float32](
-            size, FFTDirection.forward(), FFTNormalization.backward()
+            size, FFTDirection.FORWARD, FFTNormalization.BACKWARD
         ).execute(original)
         var restored = FFTPlan[DType.float32](
-            size, FFTDirection.inverse(), FFTNormalization.backward()
+            size, FFTDirection.INVERSE, FFTNormalization.BACKWARD
         ).execute(spectrum)
         var error = _relative_l2_round_trip_error(restored, original)
         var bound = _float32_tight_bound(size)
