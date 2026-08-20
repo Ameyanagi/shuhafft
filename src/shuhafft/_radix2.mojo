@@ -12,7 +12,20 @@ def _radix2_in_place[
     bit_reversal: List[Int],
 ) where dtype.is_floating_point():
     """Apply an unnormalized radix-2 DIT transform with plan-owned tables."""
-    var size = len(values)
+    _radix2_prefix_in_place(values, len(values), twiddle_re, twiddle_im, bit_reversal)
+
+
+def _radix2_prefix_in_place[
+    dtype: DType
+](
+    mut values: List[ComplexSIMD[dtype, 1]],
+    size: Int,
+    twiddle_re: List[Scalar[dtype]],
+    twiddle_im: List[Scalar[dtype]],
+    bit_reversal: List[Int],
+) where dtype.is_floating_point():
+    """Transform the first `size` values using matching radix-2 tables."""
+    debug_assert(len(values) >= size, "radix-2 workspace is too short")
     debug_assert(len(twiddle_re) == size - 1, "invalid twiddle real table")
     debug_assert(len(twiddle_im) == size - 1, "invalid twiddle imaginary table")
     debug_assert(len(bit_reversal) == size, "invalid bit-reversal table")
