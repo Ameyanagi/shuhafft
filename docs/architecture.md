@@ -36,6 +36,11 @@ generated tables, platform details, and backend implementations remain in
 their owning modules. Generic Mojo-native buffers, spans, strings, and
 collections are preferred over an ecosystem-specific universal container.
 
+The [reference architecture](reference-architecture.md) records the exact
+primary FFT sources used to evaluate future planner, scratch, algorithm, and
+backend seams. It is design evidence only; no reference implementation is a
+runtime or source dependency.
+
 ## Data flow
 
 Input validation occurs at the public boundary. Internal layers operate on
