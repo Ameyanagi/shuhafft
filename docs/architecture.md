@@ -16,6 +16,22 @@ install an application, renderer, language layer, or scientific stack.
 
 Planned implementation areas: direction, normalization, planner-compatible plans, twiddles, complex FFT/IFFT, later real transforms, algorithm kernels, SIMD, and isolated GPU backends.
 
+The current correctness slice has four concrete layers:
+
+```text
+package root
+    -> FFTPlan (validation, ownership and scaling contract)
+        -> internal scalar radix-2 kernel
+            -> Mojo standard ComplexSIMD and math primitives
+```
+
+`FFTDirection` and `FFTNormalization` are backend-independent nominal values.
+`FFTPlan` is the future backend seam: optimized implementations may replace
+the scalar kernel, but they must preserve its construction-time validation,
+explicit checkpoint, input-length validation, sign, scaling, in-place, and
+out-of-place behavior. Backend selection is deliberately absent until there is
+a second implementation to select.
+
 The package root exports only the small documented public surface. Algorithms,
 generated tables, platform details, and backend implementations remain in
 their owning modules. Generic Mojo-native buffers, spans, strings, and
@@ -23,8 +39,10 @@ collections are preferred over an ecosystem-specific universal container.
 
 ## Data flow
 
-Input validation occurs at the public boundary. Internal layers operate on
-explicit typed values, produce deterministic outputs for deterministic inputs,
-and report invalid state rather than silently replacing it with a default.
-I/O, clocks, randomness, terminal queries, filesystem access, and accelerator
-selection stay at explicit effect or backend boundaries.
+Plan invariants are validated at construction and trusted during execution;
+`validate()` is the explicit checkpoint after unusual operations. Execution
+still validates caller-owned input lengths at the public boundary. Internal
+layers operate on explicit typed values and produce deterministic outputs for
+deterministic inputs. I/O, clocks, randomness, terminal queries, filesystem
+access, and accelerator selection stay at explicit effect or backend
+boundaries.

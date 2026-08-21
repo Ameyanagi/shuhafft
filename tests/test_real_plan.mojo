@@ -1,0 +1,238 @@
+from shuhafft import (
+    ComplexFloat64,
+    FFTDirection,
+    FFTNormalization,
+    FFTPlan,
+    RealFFTPlan,
+)
+from std.complex import ComplexSIMD
+from std.testing import (
+    TestSuite,
+    assert_almost_equal,
+    assert_equal,
+    assert_raises,
+    assert_true,
+)
+
+
+def _lcg_sample(mut state: UInt64) -> Float64:
+    # Numerical Recipes LCG, matching test_dft_oracle.mojo.
+    state = (state * UInt64(1_664_525) + UInt64(1_013_904_223)) % UInt64(4_294_967_296)
+    return Float64(state) / 2147483647.5 - 1.0
+
+
+def _random_real[
+    dtype: DType
+](size: Int, seed: UInt64) -> List[Scalar[dtype]] where dtype.is_floating_point():
+    var state = seed
+    var signal = List[Scalar[dtype]](capacity=size)
+    for _ in range(size):
+        signal.append(Scalar[dtype](_lcg_sample(state)))
+    return signal^
+
+
+def _complex_signal[
+    dtype: DType
+](
+    signal: List[Scalar[dtype]],
+) -> List[
+    ComplexSIMD[dtype, 1]
+] where dtype.is_floating_point():
+    var values = List[ComplexSIMD[dtype, 1]](capacity=len(signal))
+    for sample in signal:
+        values.append(ComplexSIMD[dtype, 1](sample, 0.0))
+    return values^
+
+
+def _assert_real_matches_full_complex_float64(size: Int) raises:
+    var signal = _random_real[DType.float64](size, UInt64(0x64A11CE5))
+    var complex_signal = _complex_signal(signal)
+    var expected = FFTPlan[DType.float64](
+        size, FFTDirection.FORWARD, FFTNormalization.NONE
+    ).execute(complex_signal)
+    var actual = RealFFTPlan[DType.float64](size, FFTNormalization.NONE).forward(signal)
+    assert_equal(len(actual), size // 2 + 1)
+    for index in range(len(actual)):
+        assert_almost_equal(
+            Float64(actual[index].re),
+            Float64(expected[index].re),
+            atol=1e-9 * Float64(size),
+            rtol=1e-9,
+        )
+        assert_almost_equal(
+            Float64(actual[index].im),
+            Float64(expected[index].im),
+            atol=1e-9 * Float64(size),
+            rtol=1e-9,
+        )
+
+
+def test_float64_r2c_agrees_with_full_complex_fft() raises:
+    for size in [8, 16, 64, 256, 1024, 4096]:
+        _assert_real_matches_full_complex_float64(size)
+
+
+def test_float32_r2c_agrees_with_full_complex_fft() raises:
+    var size = 64
+    var signal = _random_real[DType.float32](size, UInt64(0x32A11CE5))
+    var complex_signal = _complex_signal(signal)
+    var expected = FFTPlan[DType.float32](
+        size, FFTDirection.FORWARD, FFTNormalization.NONE
+    ).execute(complex_signal)
+    var actual = RealFFTPlan[DType.float32](size, FFTNormalization.NONE).forward(signal)
+    for index in range(len(actual)):
+        assert_almost_equal(
+            Float64(actual[index].re),
+            Float64(expected[index].re),
+            atol=1e-4,
+            rtol=1e-4,
+        )
+        assert_almost_equal(
+            Float64(actual[index].im),
+            Float64(expected[index].im),
+            atol=1e-4,
+            rtol=1e-4,
+        )
+
+
+def test_forward_contracts_and_exact_endpoint_imaginaries() raises:
+    var signal: List[Float64] = [1.0, -2.0, 3.0, 4.0, -1.0, 0.5, 2.5, -3.0]
+    var plan = RealFFTPlan[DType.float64](8)
+    var spectrum = plan.forward(signal)
+
+    assert_equal(plan.size(), 8)
+    assert_equal(plan.spectrum_size(), 5)
+    assert_equal(len(spectrum), 5)
+    assert_equal(spectrum[0].im, 0.0)
+    assert_equal(spectrum[4].im, 0.0)
+    assert_almost_equal(spectrum[0].re, 5.0, atol=1e-12, rtol=1e-12)
+
+
+def test_two_sample_special_case() raises:
+    var signal: List[Float64] = [3.5, -1.5]
+    var plan = RealFFTPlan[DType.float64](2)
+    var spectrum = plan.forward(signal)
+    assert_equal(len(spectrum), 2)
+    assert_equal(spectrum[0].re, 2.0)
+    assert_equal(spectrum[0].im, 0.0)
+    assert_equal(spectrum[1].re, 5.0)
+    assert_equal(spectrum[1].im, 0.0)
+    var restored = plan.inverse(spectrum)
+    assert_equal(restored[0], signal[0])
+    assert_equal(restored[1], signal[1])
+
+
+def _assert_round_trip_float64(size: Int, normalization: FFTNormalization) raises:
+    var original = _random_real[DType.float64](size, UInt64(0x64BACC02))
+    var plan = RealFFTPlan[DType.float64](size, normalization)
+    var spectrum = plan.forward(original)
+    var restored = plan.inverse(spectrum)
+    for index in range(size):
+        assert_almost_equal(restored[index], original[index], atol=1e-10, rtol=1e-10)
+
+
+def test_default_backward_round_trip() raises:
+    _assert_round_trip_float64(8, FFTNormalization.BACKWARD)
+    _assert_round_trip_float64(256, FFTNormalization.BACKWARD)
+
+
+def test_ortho_round_trip() raises:
+    _assert_round_trip_float64(16, FFTNormalization.ORTHO)
+    _assert_round_trip_float64(64, FFTNormalization.ORTHO)
+
+
+def test_inverse_ignores_dc_and_nyquist_imaginaries_exactly() raises:
+    var signal = _random_real[DType.float64](32, UInt64(0x1A60BE5))
+    var plan = RealFFTPlan[DType.float64](32)
+    var clean_spectrum = plan.forward(signal)
+    var dirty_spectrum = List[ComplexFloat64](copy=clean_spectrum)
+    dirty_spectrum[0] = ComplexFloat64(dirty_spectrum[0].re, 12345.0)
+    dirty_spectrum[16] = ComplexFloat64(dirty_spectrum[16].re, -98765.0)
+
+    var clean = plan.inverse(clean_spectrum)
+    var dirty = plan.inverse(dirty_spectrum)
+    for index in range(32):
+        assert_equal(dirty[index], clean[index])
+
+
+def test_constructor_rejects_invalid_real_lengths() raises:
+    with assert_raises(contains="power of two >= 2; got 0"):
+        _ = RealFFTPlan[DType.float64](0)
+    with assert_raises(contains="power of two >= 2; got 1"):
+        _ = RealFFTPlan[DType.float64](1)
+    with assert_raises(contains="power of two >= 2; got -8"):
+        _ = RealFFTPlan[DType.float64](-8)
+    with assert_raises(contains="got 1000 (nearest are 512 and 1024)"):
+        _ = RealFFTPlan[DType.float64](1000)
+
+
+def test_execution_rejects_mismatched_lengths() raises:
+    var plan = RealFFTPlan[DType.float64](8)
+    var short_signal = List[Float64](length=7, fill=0.0)
+    with assert_raises(contains="signal length 7 does not match real FFT plan size 8"):
+        _ = plan.forward(short_signal)
+
+    var signal = List[Float64](length=8, fill=0.0)
+    var short_output = List[ComplexFloat64](length=4, fill=ComplexFloat64(0.0))
+    with assert_raises(
+        contains="spectrum length 4 does not match plan spectrum size 5 (= 8 // 2 + 1)"
+    ):
+        plan.forward_into(signal, short_output)
+
+    var large_plan = RealFFTPlan[DType.float64](1024)
+    var large_signal = List[Float64](length=1024, fill=0.0)
+    var hundred_bins = List[ComplexFloat64](length=100, fill=ComplexFloat64(0.0))
+    with assert_raises(
+        contains=(
+            "spectrum length 100 does not match plan spectrum size 513 (= 1024 // 2"
+            " + 1)"
+        )
+    ):
+        large_plan.forward_into(large_signal, hundred_bins)
+
+    var short_spectrum = List[ComplexFloat64](length=4, fill=ComplexFloat64(0.0))
+    with assert_raises(
+        contains="spectrum length 4 does not match plan spectrum size 5 (= 8 // 2 + 1)"
+    ):
+        _ = plan.inverse(short_spectrum)
+
+    var spectrum = List[ComplexFloat64](length=5, fill=ComplexFloat64(0.0))
+    var short_inverse_output = List[Float64](length=7, fill=0.0)
+    with assert_raises(contains="signal length 7 does not match real FFT plan size 8"):
+        plan.inverse_into(spectrum, short_inverse_output)
+
+
+def test_equality_writable_and_validation_contracts() raises:
+    var plan = RealFFTPlan[DType.float64](1024)
+    var equal_plan = RealFFTPlan[DType.float64](1024)
+    var different_size = RealFFTPlan[DType.float64](512)
+    var different_normalization = RealFFTPlan[DType.float64](
+        1024, FFTNormalization.ORTHO
+    )
+
+    assert_true(plan == equal_plan)
+    assert_true(plan != different_size)
+    assert_true(plan != different_normalization)
+    assert_true(plan.normalization() == FFTNormalization.BACKWARD)
+    assert_equal(String(plan), "RealFFTPlan(size=1024, backward)")
+    plan.validate()
+    plan._size = 1000
+    with assert_raises(contains="must remain a power of two >= 2"):
+        plan.validate()
+
+
+def test_forward_accepts_span_window() raises:
+    var larger: List[Float64] = [99.0, 1.0, 2.0, 3.0, 4.0, 88.0]
+    var spectrum = RealFFTPlan[DType.float64](4).forward(larger[1:5])
+    assert_almost_equal(spectrum[0].re, 10.0, atol=1e-12, rtol=1e-12)
+    assert_almost_equal(spectrum[1].re, -2.0, atol=1e-12, rtol=1e-12)
+    assert_almost_equal(spectrum[1].im, 2.0, atol=1e-12, rtol=1e-12)
+    assert_almost_equal(spectrum[2].re, -2.0, atol=1e-12, rtol=1e-12)
+    assert_equal(spectrum[0].im, 0.0)
+    assert_equal(spectrum[2].im, 0.0)
+    assert_equal(larger[0], 99.0)
+    assert_equal(larger[5], 88.0)
+
+
+def main() raises:
+    TestSuite.discover_tests[__functions_in_module()]().run()
