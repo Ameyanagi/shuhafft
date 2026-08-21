@@ -104,6 +104,24 @@ struct RealFFTPlan[dtype: DType](
         """Return the compact DC-through-Nyquist spectrum length."""
         return self._size // 2 + 1
 
+    def make_input(self) -> List[Scalar[Self.dtype]]:
+        """Return zero-filled signal storage sized for plan input or output.
+
+        The buffer is correctly sized for `forward` and `forward_into` signal
+        input and for `inverse_into` output.
+        """
+        return List[Scalar[Self.dtype]](length=self._size, fill=Scalar[Self.dtype](0.0))
+
+    def make_spectrum(self) -> List[ComplexSIMD[Self.dtype, 1]]:
+        """Return zero-filled compact-spectrum storage sized for this plan.
+
+        The buffer is correctly sized for `forward_into` output and `inverse`
+        input.
+        """
+        return List[ComplexSIMD[Self.dtype, 1]](
+            length=self.spectrum_size(), fill=ComplexSIMD[Self.dtype, 1](0.0)
+        )
+
     def normalization(self) -> FFTNormalization:
         """Return this plan's normalization convention."""
         return self._normalization

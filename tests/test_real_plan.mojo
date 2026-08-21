@@ -108,6 +108,27 @@ def test_forward_contracts_and_exact_endpoint_imaginaries() raises:
     assert_almost_equal(spectrum[0].re, 5.0, atol=1e-12, rtol=1e-12)
 
 
+def test_plan_buffer_makers_support_forward_into_round_trip() raises:
+    var plan = RealFFTPlan[DType.float64](8)
+    var signal = plan.make_input()
+    var spectrum = plan.make_spectrum()
+    assert_equal(len(signal), plan.size())
+    assert_equal(len(spectrum), plan.spectrum_size())
+    for sample in signal:
+        assert_equal(sample, 0.0)
+    for bin_value in spectrum:
+        assert_equal(bin_value.re, 0.0)
+        assert_equal(bin_value.im, 0.0)
+
+    for index in range(len(signal)):
+        signal[index] = Float64(index) - 3.0
+    plan.forward_into(signal, spectrum)
+    var restored = plan.make_input()
+    plan.inverse_into(spectrum, restored)
+    for index in range(len(signal)):
+        assert_almost_equal(restored[index], signal[index], atol=1e-12, rtol=1e-12)
+
+
 def test_two_sample_special_case() raises:
     var signal: List[Float64] = [3.5, -1.5]
     var plan = RealFFTPlan[DType.float64](2)

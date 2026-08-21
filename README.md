@@ -35,7 +35,7 @@ one second of a 50 Hz sine sampled at 1024 Hz. With 1024 samples the bin
 resolution is 1 Hz, so the peak lands exactly in bin 50:
 
 ```mojo
-from shuhafft import rfft
+from shuhafft import rfft, rfftfreq
 from std.math import sin
 
 
@@ -55,7 +55,8 @@ def main() raises:
             spectrum[peak_bin].squared_norm()
         ):
             peak_bin = bin_index
-    print("Peak bin:", peak_bin)  # Peak bin: 50
+    var freqs = rfftfreq(sample_rate, 1.0 / Float64(sample_rate))
+    print("Peak frequency:", freqs[peak_bin], "Hz")  # Peak frequency: 50.0 Hz
 ```
 
 Save this as `spectrum.mojo` in a checkout and run
@@ -70,15 +71,13 @@ For Welch or spectrogram-style work, construct one plan and reuse its output
 buffer across frames of a longer signal:
 
 ```mojo
-from shuhafft import ComplexFloat64, RealFFTPlan
+from shuhafft import RealFFTPlan
 
 
 def main() raises:
     var frame_size = 1024
     var plan = RealFFTPlan[DType.float64](frame_size)
-    var spectrum = List[ComplexFloat64](
-        length=plan.spectrum_size(), fill=ComplexFloat64(0.0)
-    )
+    var spectrum = plan.make_spectrum()
     var long_signal = List[Float64](length=4 * frame_size, fill=0.0)
     for frame_index in range(4):
         var start = frame_index * frame_size
@@ -106,9 +105,10 @@ scaling. The real-transform contract is:
   `inverse(forward(x)) == x`.
 
 Use the one-shot `fft`, `ifft`, `rfft`, and `irfft` functions for exploratory
-work. Reuse `FFTPlan` or `RealFFTPlan` when running repeated transforms or when
-you need ORTHO, FORWARD, or NONE normalization. The API is experimental and may
-change before v0.1.
+work; they accept `normalization=` (default `FFTNormalization.BACKWARD`), and
+`fft`/`ifft` also accept real input. Reuse `FFTPlan` or `RealFFTPlan` when
+running repeated transforms. The API is experimental and may change before
+v0.1.
 
 ## Scope
 

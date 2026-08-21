@@ -91,6 +91,19 @@ def test_plan_rejects_mismatched_input() raises:
         plan.execute_in_place(values)
 
 
+def test_plan_make_buffer_returns_zero_filled_execution_storage() raises:
+    var plan = FFTPlan[DType.float64](8, FFTDirection.FORWARD)
+    var buffer = plan.make_buffer()
+    assert_true(len(buffer) == plan.size())
+    for value in buffer:
+        _assert_complex64(value, 0.0, 0.0)
+
+    buffer[0] = ComplexFloat64(1.0)
+    plan.execute_in_place(buffer)
+    for value in buffer:
+        _assert_complex64(value, 1.0, 0.0)
+
+
 def test_plan_validate_provides_explicit_invariant_checkpoint() raises:
     var plan = FFTPlan[DType.float64](4, FFTDirection.FORWARD)
     plan.validate()

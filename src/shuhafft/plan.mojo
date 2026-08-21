@@ -116,6 +116,12 @@ struct FFTPlan[dtype: DType](
         """Return the exact number of complex values accepted by this plan."""
         return self._size
 
+    def make_buffer(self) -> List[ComplexSIMD[Self.dtype, 1]]:
+        """Return zero-filled storage sized for `execute` or `execute_in_place`."""
+        return List[ComplexSIMD[Self.dtype, 1]](
+            length=self._size, fill=ComplexSIMD[Self.dtype, 1](0.0)
+        )
+
     def direction(self) -> FFTDirection:
         """Return this plan's transform direction."""
         return self._direction
