@@ -6,7 +6,7 @@ from std.math import cos, sin
 from ._radix2 import _radix2_prefix_in_place
 from .direction import FFTDirection
 from .normalization import FFTNormalization
-from .plan import FFTPlan, _is_power_of_two
+from .plan import FFTPlan, _is_power_of_two, _lower_bounding_power_of_two
 
 
 struct RealFFTPlan[dtype: DType](
@@ -49,9 +49,7 @@ struct RealFFTPlan[dtype: DType](
                 )
             )
         if not _is_power_of_two(size):
-            var lower = 1
-            while lower * 2 < size:
-                lower *= 2
+            var lower = _lower_bounding_power_of_two(size)
             var higher = lower * 2
             raise Error(
                 String(
@@ -127,7 +125,12 @@ struct RealFFTPlan[dtype: DType](
     def validate(self) raises:
         """Validate the stored plan invariants explicitly."""
         if self._size < 2 or not _is_power_of_two(self._size):
-            raise Error("real FFT plan length must remain a power of two >= 2")
+            raise Error(
+                String(
+                    "real FFT plan length must remain a power of two >= 2; got ",
+                    self._size,
+                )
+            )
         var half_size = self._size // 2
         if (
             self._forward_plan.size() != half_size
@@ -137,14 +140,46 @@ struct RealFFTPlan[dtype: DType](
             or self._inverse_plan.direction() != FFTDirection.INVERSE
             or self._inverse_plan.normalization() != FFTNormalization.NONE
         ):
-            raise Error("real FFT internal plans must match the real plan length")
+            raise Error(
+                String(
+                    "real FFT internal plans must match the real plan length; ",
+                    "expected half size ",
+                    half_size,
+                    ", forward direction forward, inverse direction inverse, and ",
+                    "normalization none; got forward plan (size ",
+                    self._forward_plan.size(),
+                    ", direction ",
+                    self._forward_plan.direction(),
+                    ", normalization ",
+                    self._forward_plan.normalization(),
+                    ") and inverse plan (size ",
+                    self._inverse_plan.size(),
+                    ", direction ",
+                    self._inverse_plan.direction(),
+                    ", normalization ",
+                    self._inverse_plan.normalization(),
+                    ")",
+                )
+            )
         self._forward_plan.validate()
         self._inverse_plan.validate()
         if (
             len(self._recombination_twiddle_re) != half_size + 1
             or len(self._recombination_twiddle_im) != half_size + 1
         ):
-            raise Error("real FFT recombination tables must match the plan length")
+            raise Error(
+                String(
+                    "real FFT recombination tables must match the plan length; plan ",
+                    "length ",
+                    self._size,
+                    " expects half_size + 1 = ",
+                    half_size + 1,
+                    "; got recombination_twiddle_re length ",
+                    len(self._recombination_twiddle_re),
+                    " and recombination_twiddle_im length ",
+                    len(self._recombination_twiddle_im),
+                )
+            )
 
     def _validate_signal_length(self, signal_length: Int) raises:
         if signal_length != self._size:

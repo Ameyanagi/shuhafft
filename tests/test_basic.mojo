@@ -95,12 +95,18 @@ def test_plan_validate_provides_explicit_invariant_checkpoint() raises:
     var plan = FFTPlan[DType.float64](4, FFTDirection.FORWARD)
     plan.validate()
     plan._size = 3
-    with assert_raises(contains="must remain a non-zero power of two"):
+    with assert_raises(contains="must remain a non-zero power of two; got 3"):
         plan.validate()
 
     var plan_with_missing_table = FFTPlan[DType.float64](4, FFTDirection.FORWARD)
     plan_with_missing_table._twiddle_im = List[Float64]()
-    with assert_raises(contains="tables must match"):
+    with assert_raises(
+        contains=(
+            "tables must match the plan length; plan length 4 expects twiddle_re"
+            " length 3, twiddle_im length 3, and bit_reversal length 4; got"
+            " twiddle_re length 3, twiddle_im length 0, and bit_reversal length 4"
+        )
+    ):
         plan_with_missing_table.validate()
 
 

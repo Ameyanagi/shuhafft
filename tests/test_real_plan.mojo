@@ -217,8 +217,36 @@ def test_equality_writable_and_validation_contracts() raises:
     assert_equal(String(plan), "RealFFTPlan(size=1024, backward)")
     plan.validate()
     plan._size = 1000
-    with assert_raises(contains="must remain a power of two >= 2"):
+    with assert_raises(contains="must remain a power of two >= 2; got 1000"):
         plan.validate()
+
+    var plan_with_invalid_inner_plan = RealFFTPlan[DType.float64](8)
+    plan_with_invalid_inner_plan._forward_plan._size = 2
+    plan_with_invalid_inner_plan._forward_plan._direction = FFTDirection.INVERSE
+    plan_with_invalid_inner_plan._forward_plan._normalization = (
+        FFTNormalization.BACKWARD
+    )
+    with assert_raises(
+        contains=(
+            "internal plans must match the real plan length; expected half size 4,"
+            " forward direction forward, inverse direction inverse, and"
+            " normalization none; got forward plan (size 2, direction inverse,"
+            " normalization backward) and inverse plan (size 4, direction inverse,"
+            " normalization none)"
+        )
+    ):
+        plan_with_invalid_inner_plan.validate()
+
+    var plan_with_missing_recombination_table = RealFFTPlan[DType.float64](8)
+    plan_with_missing_recombination_table._recombination_twiddle_im = List[Float64]()
+    with assert_raises(
+        contains=(
+            "recombination tables must match the plan length; plan length 8 expects"
+            " half_size + 1 = 5; got recombination_twiddle_re length 5 and"
+            " recombination_twiddle_im length 0"
+        )
+    ):
+        plan_with_missing_recombination_table.validate()
 
 
 def test_forward_accepts_span_window() raises:

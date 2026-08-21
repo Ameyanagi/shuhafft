@@ -12,6 +12,14 @@ def _is_power_of_two(value: Int) -> Bool:
     return value > 0 and (value & (value - 1)) == 0
 
 
+def _lower_bounding_power_of_two(value: Int) -> Int:
+    """Return the greatest power of two below a positive non-power-of-two value."""
+    var lower = 1
+    while lower * 2 < value:
+        lower *= 2
+    return lower
+
+
 struct FFTPlan[dtype: DType](
     Copyable, Equatable, Movable, Writable
 ) where dtype.is_floating_point():
@@ -51,9 +59,7 @@ struct FFTPlan[dtype: DType](
                 )
             )
         if not _is_power_of_two(size):
-            var lower = 1
-            while lower * 2 < size:
-                lower *= 2
+            var lower = _lower_bounding_power_of_two(size)
             var higher = lower * 2
             raise Error(
                 String(
@@ -147,13 +153,35 @@ struct FFTPlan[dtype: DType](
     def validate(self) raises:
         """Validate the stored plan invariants explicitly."""
         if not _is_power_of_two(self._size):
-            raise Error("FFT plan length must remain a non-zero power of two")
+            raise Error(
+                String(
+                    "FFT plan length must remain a non-zero power of two; got ",
+                    self._size,
+                )
+            )
         if (
             len(self._twiddle_re) != self._size - 1
             or len(self._twiddle_im) != self._size - 1
             or len(self._bit_reversal) != self._size
         ):
-            raise Error("FFT plan tables must match the plan length")
+            raise Error(
+                String(
+                    "FFT plan tables must match the plan length; plan length ",
+                    self._size,
+                    " expects twiddle_re length ",
+                    self._size - 1,
+                    ", twiddle_im length ",
+                    self._size - 1,
+                    ", and bit_reversal length ",
+                    self._size,
+                    "; got twiddle_re length ",
+                    len(self._twiddle_re),
+                    ", twiddle_im length ",
+                    len(self._twiddle_im),
+                    ", and bit_reversal length ",
+                    len(self._bit_reversal),
+                )
+            )
 
     def _validate_input_length(self, input_length: Int) raises:
         if input_length != self._size:

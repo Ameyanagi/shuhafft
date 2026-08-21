@@ -145,5 +145,25 @@ def test_irfft_rejects_non_power_of_two_implied_length() raises:
         _ = irfft[DType.float64](spectrum)
 
 
+def test_ifft_suggests_irfft_only_for_compact_real_spectrum_shape() raises:
+    var rfft_spectrum = List[ComplexFloat64](length=5, fill=ComplexFloat64(0.0))
+    with assert_raises(
+        contains=(
+            "FFT length must be a non-zero power of two; got 5 (nearest are 4 and"
+            " 8); if this spectrum came from rfft, use irfft to reconstruct the 8"
+            " real samples"
+        )
+    ):
+        _ = ifft[DType.float64](rfft_spectrum)
+
+    var other_invalid_length = List[ComplexFloat64](length=6, fill=ComplexFloat64(0.0))
+    with assert_raises(
+        contains=(
+            "FFT length must be a non-zero power of two; got 6 (nearest are 4 and 8)"
+        )
+    ):
+        _ = ifft[DType.float64](other_invalid_length)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
