@@ -2,6 +2,7 @@
 
 from std.complex import ComplexSIMD
 
+from .bluestein import BluesteinFFTPlan
 from .direction import FFTDirection
 from .normalization import FFTNormalization
 from .plan import FFTPlan, _is_power_of_two, _lower_bounding_power_of_two
@@ -18,12 +19,17 @@ def fft[
     """Return the one-shot complex FFT with the requested normalization.
 
     NumPy `norm="backward"`, `"ortho"`, and `"forward"` map to
-    `FFTNormalization.BACKWARD`, `ORTHO`, and `FORWARD`; use `FFTPlan` for
-    repeated transforms. Only float32 and float64 are supported.
+    `FFTNormalization.BACKWARD`, `ORTHO`, and `FORWARD`. Power-of-two lengths
+    use radix-2; other lengths use Bluestein convolution. Use `FFTPlan` for
+    repeated radix-2 transforms or `BluesteinFFTPlan` for repeated arbitrary-
+    length transforms. Only float32 and float64 are supported.
     """
-    return FFTPlan[dtype](len(values), FFTDirection.FORWARD, normalization).execute(
-        values
-    )
+    if _is_power_of_two(len(values)):
+        return FFTPlan[dtype](len(values), FFTDirection.FORWARD, normalization).execute(
+            values
+        )
+    var plan = BluesteinFFTPlan[dtype](len(values), FFTDirection.FORWARD, normalization)
+    return plan.execute(values)
 
 
 def fft[
@@ -38,9 +44,9 @@ def fft[
     Real samples are promoted to complex values with zero imaginary parts for
     NumPy parity and full-spectrum needs. Use `rfft` for the efficient
     half-spectrum path for real signals. NumPy `norm="backward"`, `"ortho"`,
-    and `"forward"` map to `FFTNormalization.BACKWARD`, `ORTHO`, and `FORWARD`;
-    use `FFTPlan` for repeated transforms. Only float32 and float64 are
-    supported.
+    and `"forward"` map to `FFTNormalization.BACKWARD`, `ORTHO`, and `FORWARD`.
+    Power-of-two lengths use radix-2 and other lengths use Bluestein
+    convolution. Only float32 and float64 are supported.
     """
     var complex_values = List[ComplexSIMD[dtype, 1]](capacity=len(values))
     for value in values:
@@ -59,33 +65,16 @@ def ifft[
 
     With backward normalization, `ifft(fft(x)) == x`. NumPy `norm="backward"`,
     `"ortho"`, and `"forward"` map to `FFTNormalization.BACKWARD`, `ORTHO`, and
-    `FORWARD`; use `FFTPlan` for repeated transforms. Only float32 and float64
-    are supported.
+    `FORWARD`. Power-of-two lengths use radix-2 and other lengths use Bluestein
+    convolution. Use a reusable plan for repeated transforms. Only float32 and
+    float64 are supported.
     """
-    var spectrum_length = len(values)
-    if (
-        spectrum_length >= 3
-        and not _is_power_of_two(spectrum_length)
-        and _is_power_of_two(spectrum_length - 1)
-    ):
-        var lower = _lower_bounding_power_of_two(spectrum_length)
-        var higher = lower * 2
-        raise Error(
-            String(
-                "FFT length must be a non-zero power of two; got ",
-                spectrum_length,
-                " (nearest are ",
-                lower,
-                " and ",
-                higher,
-                "); if this spectrum came from rfft, use irfft to reconstruct the ",
-                (spectrum_length - 1) * 2,
-                " real samples",
-            )
+    if _is_power_of_two(len(values)):
+        return FFTPlan[dtype](len(values), FFTDirection.INVERSE, normalization).execute(
+            values
         )
-    return FFTPlan[dtype](spectrum_length, FFTDirection.INVERSE, normalization).execute(
-        values
-    )
+    var plan = BluesteinFFTPlan[dtype](len(values), FFTDirection.INVERSE, normalization)
+    return plan.execute(values)
 
 
 def ifft[
@@ -101,8 +90,8 @@ def ifft[
     NumPy parity and full-spectrum needs. Use `rfft` and `irfft` for the
     efficient half-spectrum path for real signals. NumPy `norm="backward"`,
     `"ortho"`, and `"forward"` map to `FFTNormalization.BACKWARD`, `ORTHO`, and
-    `FORWARD`; use `FFTPlan` for repeated transforms. Only float32 and float64
-    are supported.
+    `FORWARD`. Power-of-two lengths use radix-2 and other lengths use Bluestein
+    convolution. Only float32 and float64 are supported.
     """
     var complex_values = List[ComplexSIMD[dtype, 1]](capacity=len(values))
     for value in values:

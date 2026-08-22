@@ -3,7 +3,11 @@
 from std.complex import ComplexSIMD
 from std.math import cos, sin
 
-from ._radix2 import _radix2_prefix_in_place
+from ._radix2 import (
+    _radix2_interleaved_in_place,
+    _radix2_prefix_in_place,
+    _scale_in_place,
+)
 from .direction import FFTDirection
 from .normalization import FFTNormalization
 from .plan import FFTPlan, _is_power_of_two, _lower_bounding_power_of_two
@@ -22,13 +26,16 @@ struct RealFFTPlan[dtype: DType](
     nonzero imaginaries there, matching `scipy.fft.irfft`. With the default
     `FFTNormalization.BACKWARD`, `inverse(forward(x)) == x`. Direct mutation
     of underscore-prefixed fields is out of contract; call `validate()` for
-    an explicit invariant checkpoint after unusual operations.
+    an explicit structural checkpoint after unusual operations. Validation
+    checks configuration, nested-plan contracts, and table shapes, but does not
+    recompute numerical twiddle contents.
     """
 
     var _size: Int
     var _normalization: FFTNormalization
     var _forward_plan: FFTPlan[Self.dtype]
     var _inverse_plan: FFTPlan[Self.dtype]
+    var _inverse_twiddle_interleaved: List[Scalar[Self.dtype]]
     var _recombination_twiddle_re: List[Scalar[Self.dtype]]
     var _recombination_twiddle_im: List[Scalar[Self.dtype]]
 
@@ -63,6 +70,7 @@ struct RealFFTPlan[dtype: DType](
                 )
             )
 
+        normalization.validate()
         self._size = size
         self._normalization = normalization
         var half_size = size // 2
@@ -72,6 +80,16 @@ struct RealFFTPlan[dtype: DType](
         self._inverse_plan = FFTPlan[Self.dtype](
             half_size, FFTDirection.INVERSE, FFTNormalization.NONE
         )
+        self._inverse_twiddle_interleaved = List[Scalar[Self.dtype]](
+            capacity=2 * (half_size - 1)
+        )
+        for index in range(half_size - 1):
+            self._inverse_twiddle_interleaved.append(
+                self._inverse_plan._twiddles[index].re
+            )
+            self._inverse_twiddle_interleaved.append(
+                self._inverse_plan._twiddles[index].im
+            )
         self._recombination_twiddle_re = List[Scalar[Self.dtype]](
             capacity=half_size + 1
         )
@@ -89,6 +107,9 @@ struct RealFFTPlan[dtype: DType](
         self._normalization = copy._normalization
         self._forward_plan = FFTPlan[Self.dtype](copy=copy._forward_plan)
         self._inverse_plan = FFTPlan[Self.dtype](copy=copy._inverse_plan)
+        self._inverse_twiddle_interleaved = List[Scalar[Self.dtype]](
+            copy=copy._inverse_twiddle_interleaved
+        )
         self._recombination_twiddle_re = List[Scalar[Self.dtype]](
             copy=copy._recombination_twiddle_re
         )
@@ -141,7 +162,7 @@ struct RealFFTPlan[dtype: DType](
         writer.write("RealFFTPlan(size=", self._size, ", ", self._normalization, ")")
 
     def validate(self) raises:
-        """Validate the stored plan invariants explicitly."""
+        """Validate configuration and table shapes, not numerical table contents."""
         if self._size < 2 or not _is_power_of_two(self._size):
             raise Error(
                 String(
@@ -149,6 +170,7 @@ struct RealFFTPlan[dtype: DType](
                     self._size,
                 )
             )
+        self._normalization.validate()
         var half_size = self._size // 2
         if (
             self._forward_plan.size() != half_size
@@ -181,6 +203,18 @@ struct RealFFTPlan[dtype: DType](
             )
         self._forward_plan.validate()
         self._inverse_plan.validate()
+        if len(self._inverse_twiddle_interleaved) != 2 * (half_size - 1):
+            raise Error(
+                String(
+                    "real FFT inverse interleaved twiddle table must match the ",
+                    "plan length; plan length ",
+                    self._size,
+                    " expects ",
+                    2 * (half_size - 1),
+                    " scalar entries; got ",
+                    len(self._inverse_twiddle_interleaved),
+                )
+            )
         if (
             len(self._recombination_twiddle_re) != half_size + 1
             or len(self._recombination_twiddle_im) != half_size + 1
@@ -300,8 +334,7 @@ struct RealFFTPlan[dtype: DType](
         _radix2_prefix_in_place(
             spectrum,
             half_size,
-            self._forward_plan._twiddle_re,
-            self._forward_plan._twiddle_im,
+            self._forward_plan._twiddles,
             self._forward_plan._bit_reversal,
         )
 
@@ -353,21 +386,18 @@ struct RealFFTPlan[dtype: DType](
         Nyquist; bin `k` is `k * sample_rate / n`. `signal` must contain exactly
         `n` samples. Forward writes literal-zero DC and Nyquist imaginaries;
         inverse ignores nonzero values there. With `FFTNormalization.BACKWARD`,
-        `inverse_into(forward(x))` reconstructs `x`. This Mojo 1.0 implementation
-        uses one local `n // 2` complex workspace because scalar `List` storage
-        cannot be safely reinterpreted as complex values.
+        `inverse_into(forward(x))` reconstructs `x`. The caller-owned signal is
+        reused as typed scalar workspace, so execution allocates no scratch
+        storage. Interleaved twiddle scalars make complete native-width complex
+        butterfly chunks contiguous for SIMD without reinterpreting
+        `ComplexSIMD` storage. Any remainder uses the scalar path.
         """
         self._validate_spectrum_length(len(spectrum))
         self._validate_signal_length(len(signal))
         var half_size = self._size // 2
-        var packed = List[ComplexSIMD[Self.dtype, 1]](
-            length=half_size, fill=ComplexSIMD[Self.dtype, 1](0.0)
-        )
         var half = Scalar[Self.dtype](0.5)
-        packed[0] = ComplexSIMD[Self.dtype, 1](
-            (spectrum[0].re + spectrum[half_size].re) * half,
-            (spectrum[0].re - spectrum[half_size].re) * half,
-        )
+        signal[0] = (spectrum[0].re + spectrum[half_size].re) * half
+        signal[1] = (spectrum[0].re - spectrum[half_size].re) * half
         for index in range(1, half_size):
             var value = spectrum[index]
             var paired = spectrum[half_size - index]
@@ -378,16 +408,22 @@ struct RealFFTPlan[dtype: DType](
                 self._recombination_twiddle_im[index],
                 self._recombination_twiddle_re[index],
             )
-            packed[index] = (
+            var packed = (
                 (value + mirrored) + (value - mirrored) * i_conjugate_twiddle
             ) * half
+            signal[2 * index] = packed.re
+            signal[2 * index + 1] = packed.im
 
-        self._inverse_plan.execute_in_place(packed)
+        _radix2_interleaved_in_place(
+            signal,
+            half_size,
+            self._inverse_twiddle_interleaved,
+            self._inverse_plan._bit_reversal,
+        )
         # A length-M inverse produces M*x. Multiply by 2 so normalization has
         # the same unnormalized n*x basis as a length-n inverse complex DFT.
         var scale = Scalar[Self.dtype](2.0) * self._normalization.factor[Self.dtype](
             FFTDirection.INVERSE, self._size
         )
-        for index in range(half_size):
-            signal[2 * index] = packed[index].re * scale
-            signal[2 * index + 1] = packed[index].im * scale
+        if scale != Scalar[Self.dtype](1.0):
+            _scale_in_place(signal, scale)

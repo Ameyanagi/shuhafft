@@ -2,6 +2,7 @@
 
 from std.complex import ComplexFloat32, ComplexFloat64
 
+from .bluestein import BluesteinFFTPlan
 from .direction import FFTDirection
 from .frequencies import fftfreq, rfftfreq
 from .normalization import FFTNormalization

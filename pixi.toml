@@ -7,6 +7,7 @@ version = "0.0.0"
 
 [tasks]
 bench = { cmd = "mojo run -I src benchmarks/bench_radix2.mojo", description = "Run the radix-2 forward-transform benchmark" }
+profile = { cmd = "mojo build -I src benchmarks/profile_fft.mojo -o .pixi/profile_fft && .pixi/profile_fft", description = "Build and run p50/p95 FFT profiling workloads" }
 check = { depends-on = ["format-check", "readme-check", "test", "precompile"], description = "Run the complete validation suite" }
 example = { cmd = "mojo run -I src examples/basic.mojo", description = "Run the structural smoke example" }
 format = { cmd = "bash scripts/format.sh", description = "Format Mojo source files" }

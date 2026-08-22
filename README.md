@@ -29,10 +29,13 @@ The Conda package is `mojo-shuhafft`; its Mojo import is `shuhafft`.
 
 ## Quickstart
 
-ShuhaFFT currently provides radix-2 transforms, so transform lengths must be
-powers of two; real transforms need at least 2 samples. This example generates
-one second of a 50 Hz sine sampled at 1024 Hz. With 1024 samples the bin
-resolution is 1 Hz, so the peak lands exactly in bin 50:
+One-shot complex transforms accept any length from 1 through 2^20: power-of-two
+inputs use radix-2 and other lengths dispatch to Bluestein convolution. Reusable
+`FFTPlan` remains the lean radix-2 plan; use `BluesteinFFTPlan` when repeatedly
+transforming a prime or otherwise awkward length. Real transforms currently
+require a power-of-two length of at least 2. This example generates one second
+of a 50 Hz sine sampled at 1024 Hz. With 1024 samples the bin resolution is 1
+Hz, so the peak lands exactly in bin 50:
 
 ```mojo
 from shuhafft import rfft, rfftfreq
@@ -65,6 +68,26 @@ Save this as `spectrum.mojo` in a checkout and run
 The explicit form `rfft[DType.float64](...)` is available as a disambiguation
 escape hatch when input inference is not enough.
 
+## Reuse an arbitrary-length plan
+
+`BluesteinFFTPlan` precomputes its chirp and convolution spectrum once. Its
+`execute_into` method reuses plan-owned convolution workspace and caller-owned
+output, including for prime lengths:
+
+```mojo
+from shuhafft import BluesteinFFTPlan, FFTDirection
+from std.complex import ComplexFloat64
+
+
+def main() raises:
+    var values = List[ComplexFloat64](length=1009, fill=ComplexFloat64(0.0))
+    values[0] = ComplexFloat64(1.0)
+    var plan = BluesteinFFTPlan[DType.float64](1009, FFTDirection.FORWARD)
+    var spectrum = plan.make_buffer()
+    plan.execute_into(values, spectrum)
+    print(len(spectrum))  # 1009
+```
+
 ## Reuse a plan for Welch-style frames
 
 For Welch or spectrogram-style work, construct one plan and reuse its output
@@ -93,7 +116,10 @@ For more detail, see [the architecture](docs/architecture.md),
 
 Backward normalization is the default, so forward transforms are unscaled,
 inverse transforms divide by the length, and round trips work without extra
-scaling. The real-transform contract is:
+scaling. `FORWARD` instead divides only the forward transform by the length,
+`ORTHO` divides both directions by `sqrt(n)`, and `NONE` leaves both directions
+unscaled, so a forward/inverse pair under `NONE` returns `n * x`. The
+real-transform contract is:
 
 - Bins are DC-first in ascending frequency; bin `k` is
   `k * sample_rate / n`.
@@ -115,10 +141,11 @@ v0.1.
 ShuhaFFT owns transform semantics, planning, normalization, and optimized
 backends without absorbing signal-processing policy.
 
-The current implementation provides CPU radix-2 complex and real transforms for
-Float32 and Float64, with one-shot conveniences and reusable plans. The project
-is independently installable and does not require any application from the
-wider ecosystem.
+The current implementation provides CPU radix-2 complex and real transforms,
+arbitrary-length complex Bluestein transforms, native-width SIMD for the typed
+interleaved real-inverse kernel, one-shot conveniences, and reusable plans for
+Float32 and Float64. The project is independently installable and does not
+require any application from the wider ecosystem.
 
 ## Development
 
@@ -146,7 +173,7 @@ spellings (`fft`, `rfft`) so the ecosystem reads consistently to scientists.
 - `src/shuhafft/`: library source; `__init__.mojo` defines the package boundary
 - `tests/`: TestSuite unit, reference-value, and invariant tests
 - `examples/`: small compilable usage programs
-- `benchmarks/`: reproducible methodology and later benchmark programs
+- `benchmarks/`: reproducible throughput, latency, and profiler workloads
 - `docs/`: architecture, design, compatibility, roadmap, and release policy
 - `conda.recipe/`: local Rattler build recipe
 

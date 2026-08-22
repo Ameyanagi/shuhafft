@@ -24,6 +24,18 @@ struct FFTDirection(Equatable, TrivialRegisterPassable, Writable):
         """Return whether this is the inverse transform."""
         return self._value == 1
 
+    def validate(self) raises:
+        """Reject a discriminant other than the two public constants."""
+        if self._value != 0 and self._value != 1:
+            raise Error(
+                String(
+                    "direction discriminant ",
+                    self._value,
+                    " is invalid; use FFTDirection.FORWARD (0) or ",
+                    "FFTDirection.INVERSE (1)",
+                )
+            )
+
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
 

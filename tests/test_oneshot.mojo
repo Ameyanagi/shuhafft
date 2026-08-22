@@ -234,36 +234,21 @@ def test_irfft_rejects_non_power_of_two_implied_length() raises:
         _ = irfft[DType.float64](spectrum)
 
 
-def test_ifft_suggests_irfft_only_for_compact_real_spectrum_shape() raises:
-    var rfft_spectrum = List[ComplexFloat64](length=5, fill=ComplexFloat64(0.0))
-    with assert_raises(
-        contains=(
-            "FFT length must be a non-zero power of two; got 5 (nearest are 4 and"
-            " 8); if this spectrum came from rfft, use irfft to reconstruct the 8"
-            " real samples"
-        )
-    ):
-        _ = ifft[DType.float64](rfft_spectrum)
-
-    var other_invalid_length = List[ComplexFloat64](length=6, fill=ComplexFloat64(0.0))
-    with assert_raises(
-        contains=(
-            "FFT length must be a non-zero power of two; got 6 (nearest are 4 and 8)"
-        )
-    ):
-        _ = ifft[DType.float64](other_invalid_length)
+def test_ifft_accepts_awkward_complex_spectrum_lengths() raises:
+    for size in [5, 6, 11]:
+        var spectrum = List[ComplexFloat64](length=size, fill=ComplexFloat64(0.0))
+        var signal = ifft[DType.float64](spectrum)
+        assert_equal(len(signal), size)
+        for value in signal:
+            assert_equal(value, ComplexFloat64(0.0))
 
 
-def test_real_input_ifft_preserves_compact_spectrum_hint() raises:
+def test_real_input_ifft_accepts_awkward_lengths() raises:
     var real_spectrum = List[Float64](length=5, fill=0.0)
-    with assert_raises(
-        contains=(
-            "FFT length must be a non-zero power of two; got 5 (nearest are 4 and"
-            " 8); if this spectrum came from rfft, use irfft to reconstruct the 8"
-            " real samples"
-        )
-    ):
-        _ = ifft(real_spectrum)
+    var signal = ifft(real_spectrum)
+    assert_equal(len(signal), 5)
+    for value in signal:
+        assert_equal(value, ComplexFloat64(0.0))
 
 
 def main() raises:

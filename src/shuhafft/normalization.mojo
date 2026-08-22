@@ -31,6 +31,10 @@ struct FFTNormalization(Equatable, TrivialRegisterPassable, Writable):
     ] where dtype.is_floating_point():
         """Return the multiplicative scale for a validated transform length."""
         debug_assert(size > 0, "normalization length must be positive")
+        debug_assert(
+            self._value >= 0 and self._value <= 3,
+            "normalization discriminant must be validated",
+        )
         var one = Scalar[dtype](1.0)
         var n = Scalar[dtype](size)
         if self._value == 3:
@@ -40,6 +44,18 @@ struct FFTNormalization(Equatable, TrivialRegisterPassable, Writable):
         if self._value == 2 and direction.is_forward():
             return one / n
         return one
+
+    def validate(self) raises:
+        """Reject a discriminant other than the four public constants."""
+        if self._value < 0 or self._value > 3:
+            raise Error(
+                String(
+                    "normalization discriminant ",
+                    self._value,
+                    " is invalid; use FFTNormalization.NONE (0), BACKWARD (1), ",
+                    "FORWARD (2), or ORTHO (3)",
+                )
+            )
 
     def __eq__(self, other: Self) -> Bool:
         return self._value == other._value
