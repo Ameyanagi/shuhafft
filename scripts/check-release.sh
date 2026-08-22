@@ -2,6 +2,17 @@
 
 set -euo pipefail
 
+metadata_only=false
+if [[ "${1:-}" == "--metadata-only" ]]; then
+    metadata_only=true
+    shift
+fi
+
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+    echo "usage: $0 [--metadata-only] vMAJOR.MINOR.PATCH [EXPECTED_COMMIT]" >&2
+    exit 2
+fi
+
 tag_name=${1:-}
 expected_commit=${2:-HEAD}
 
@@ -12,25 +23,27 @@ fi
 release_version=${BASH_REMATCH[1]}
 tag_ref="refs/tags/$tag_name"
 
-if ! git rev-parse --verify --quiet "$tag_ref" >/dev/null; then
-    echo "release tag '$tag_name' is not available in the checkout" >&2
-    exit 1
-fi
-if [[ $(git cat-file -t "$tag_ref") != "tag" ]]; then
-    echo "release tag '$tag_name' must be an annotated tag" >&2
-    exit 1
-fi
+if [[ "$metadata_only" == false ]]; then
+    if ! git rev-parse --verify --quiet "$tag_ref" >/dev/null; then
+        echo "release tag '$tag_name' is not available in the checkout" >&2
+        exit 1
+    fi
+    if [[ $(git cat-file -t "$tag_ref") != "tag" ]]; then
+        echo "release tag '$tag_name' must be an annotated tag" >&2
+        exit 1
+    fi
 
-tag_commit=$(git rev-parse "$tag_ref^{commit}")
-checkout_commit=$(git rev-parse "$expected_commit^{commit}")
-if [[ "$tag_commit" != "$checkout_commit" ]]; then
-    echo "release tag '$tag_name' resolves to $tag_commit, not $checkout_commit" >&2
-    exit 1
-fi
-: "${GITHUB_SHA:=$expected_commit}"
-if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
-    echo "release commit $GITHUB_SHA is not contained in origin/main" >&2
-    exit 1
+    tag_commit=$(git rev-parse "$tag_ref^{commit}")
+    checkout_commit=$(git rev-parse "$expected_commit^{commit}")
+    if [[ "$tag_commit" != "$checkout_commit" ]]; then
+        echo "release tag '$tag_name' resolves to $tag_commit, not $checkout_commit" >&2
+        exit 1
+    fi
+    : "${GITHUB_SHA:=$expected_commit}"
+    if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+        echo "release commit $GITHUB_SHA is not contained in origin/main" >&2
+        exit 1
+    fi
 fi
 
 pixi_version=$(sed -nE 's/^version = "([^"]+)"$/\1/p' pixi.toml)
@@ -45,8 +58,15 @@ if [[ "$recipe_version" != "$release_version" ]]; then
 fi
 
 pixi_compiler=$(sed -nE 's/^mojo = "==([^"]+)"$/\1/p' pixi.toml)
-if [[ -z "$pixi_compiler" ]]; then
-    echo "pixi.toml must pin mojo with an exact ==VERSION constraint" >&2
+if [[ "$pixi_compiler" != "1.0.0" ]]; then
+    echo "pixi.toml must exactly pin Mojo 1.0.0" >&2
+    exit 1
+fi
+
+recipe_compiler_lines=$(grep -Ec '^    - mojo-compiler ' conda.recipe/recipe.yaml || true)
+exact_recipe_pins=$(grep -Ec '^    - mojo-compiler =1\.0\.0$' conda.recipe/recipe.yaml || true)
+if [[ "$recipe_compiler_lines" -ne 3 || "$exact_recipe_pins" -ne 3 ]]; then
+    echo "recipe must contain exactly three mojo-compiler =1.0.0 requirements" >&2
     exit 1
 fi
 
@@ -61,8 +81,8 @@ for section in build host run; do
             }
         ' conda.recipe/recipe.yaml
     )
-    if [[ "$recipe_pin" != "=$pixi_compiler" ]]; then
-        echo "recipe $section requirement must be exactly mojo-compiler =$pixi_compiler" >&2
+    if [[ "$recipe_pin" != "=1.0.0" ]]; then
+        echo "recipe $section requirement must be exactly mojo-compiler =1.0.0" >&2
         exit 1
     fi
 done

@@ -31,3 +31,6 @@ and uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   normalized batch means separately, and isolate profiler burns by algorithm.
 - Document plan `validate()` as a structural checkpoint and correct the
   Int-backed normalization contract in the v0.1 plan.
+
+[Unreleased]: https://github.com/Ameyanagi/shuhafft/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Ameyanagi/shuhafft/releases/tag/v0.1.0

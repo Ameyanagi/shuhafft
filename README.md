@@ -6,11 +6,14 @@ Production-quality fast Fourier transforms for Mojo.
 
 ## Install
 
-In a [Pixi](https://pixi.sh/) project, add the Mojo ecosystem channel and the
-ShuhaFFT package:
+In a [Pixi](https://pixi.sh/) project, add the Mojo ecosystem, Modular `max`,
+and conda-forge channels, then add ShuhaFFT:
 
 ```sh
-pixi project channel add https://ameyanagi.github.io/mojo-channel
+pixi project channel add \
+  https://ameyanagi.github.io/mojo-channel \
+  https://conda.modular.com/max \
+  conda-forge
 pixi add mojo-shuhafft
 ```
 

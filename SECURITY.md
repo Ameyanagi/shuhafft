@@ -5,5 +5,5 @@ private vulnerability reporting for this repository. If that is unavailable,
 contact `contact@ameyanagi.com` with the repository name and a minimal
 reproduction.
 
-Only the latest v0.1.x release and the main development branch are supported.
+Only the latest 0.x release and the main development branch are supported.
 Security support windows will be expanded when stable versions exist.
