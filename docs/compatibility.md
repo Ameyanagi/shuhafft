@@ -17,5 +17,5 @@ events and require the full locked test suite.
 | Windows/WSL | Not yet supported or tested |
 | GPU | Not supported unless explicitly listed in the roadmap |
 
-The repository is experimental and has no source-compatibility promise before
-its first release. Each release names the exact compiler used to build it.
+The v0.1 API is experimental and has no source-compatibility promise across
+0.x releases. Each release names the exact compiler used to build it.

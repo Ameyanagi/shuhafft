@@ -12,7 +12,7 @@
 
 - Add ergonomic APIs only after v0.1 usage demonstrates repeated friction.
 - Expand examples and integration fixtures.
-- Publish the first modular-community recipe when the package is useful alone.
+- Maintain the modular-community recipe and ecosystem installation docs.
 
 ## v0.3 — Performance
 

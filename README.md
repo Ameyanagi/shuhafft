@@ -1,16 +1,19 @@
 # ShuhaFFT
 
-> **Experimental — API not yet released.**
+> **v0.1.0 — experimental API.**
 
 Production-quality fast Fourier transforms for Mojo.
 
 ## Install
 
-In a [Pixi](https://pixi.sh/) project, add the Mojo ecosystem channel and the
-ShuhaFFT package:
+In a [Pixi](https://pixi.sh/) project, add the Mojo ecosystem, Modular `max`,
+and conda-forge channels, then add ShuhaFFT:
 
 ```sh
-pixi project channel add https://ameyanagi.github.io/mojo-channel
+pixi project channel add \
+  https://ameyanagi.github.io/mojo-channel \
+  https://conda.modular.com/max \
+  conda-forge
 pixi add mojo-shuhafft
 ```
 
@@ -133,8 +136,8 @@ real-transform contract is:
 Use the one-shot `fft`, `ifft`, `rfft`, and `irfft` functions for exploratory
 work; they accept `normalization=` (default `FFTNormalization.BACKWARD`), and
 `fft`/`ifft` also accept real input. Reuse `FFTPlan` or `RealFFTPlan` when
-running repeated transforms. The API is experimental and may change before
-v0.1.
+running repeated transforms. The API remains experimental and may change
+across 0.x releases.
 
 ## Scope
 

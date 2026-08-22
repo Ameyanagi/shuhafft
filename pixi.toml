@@ -3,7 +3,7 @@ authors = ["Ameyanagi <contact@ameyanagi.com>"]
 channels = ["https://conda.modular.com/max", "conda-forge"]
 name = "shuhafft"
 platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
-version = "0.0.0"
+version = "0.1.0"
 
 [tasks]
 bench = { cmd = "mojo run -I src benchmarks/bench_radix2.mojo", description = "Run the radix-2 forward-transform benchmark" }

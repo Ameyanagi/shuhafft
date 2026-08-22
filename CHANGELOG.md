@@ -1,9 +1,11 @@
 # Changelog
 
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
-and uses semantic versioning after the first public release.
+and uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-08-22
 
 ### Added
 
@@ -29,3 +31,6 @@ and uses semantic versioning after the first public release.
   normalized batch means separately, and isolate profiler burns by algorithm.
 - Document plan `validate()` as a structural checkpoint and correct the
   Int-backed normalization contract in the v0.1 plan.
+
+[Unreleased]: https://github.com/Ameyanagi/shuhafft/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Ameyanagi/shuhafft/releases/tag/v0.1.0
