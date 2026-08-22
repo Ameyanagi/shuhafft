@@ -3,13 +3,21 @@
 from std.complex import ComplexSIMD
 from std.math import cos, sin
 
-from ._radix2 import _radix2_in_place
+from ._radix2 import _radix2_prefix_in_place
 from .direction import FFTDirection
 from .normalization import FFTNormalization
 
 
 def _is_power_of_two(value: Int) -> Bool:
     return value > 0 and (value & (value - 1)) == 0
+
+
+def _lower_bounding_power_of_two(value: Int) -> Int:
+    """Return the greatest power of two below a positive non-power-of-two value."""
+    var lower = 1
+    while lower * 2 < value:
+        lower *= 2
+    return lower
 
 
 struct FFTPlan[dtype: DType](
@@ -21,7 +29,9 @@ struct FFTPlan[dtype: DType](
     be a non-zero power of two. A plan can execute repeatedly and forms the
     semantic seam for future optimized backends. Direct mutation of
     underscore-prefixed fields is out of contract; call `validate()` for an
-    explicit invariant checkpoint after unusual operations.
+    explicit structural checkpoint after unusual operations. Validation checks
+    configuration and table shapes, but does not recompute numerical table
+    contents.
     """
 
     var _size: Int
@@ -29,8 +39,7 @@ struct FFTPlan[dtype: DType](
     var _normalization: FFTNormalization
     # Stage half-width `half` starts at flat index `half - 1`, with `half`
     # contiguous entries. Thus stages cover [0, size - 1) without gaps.
-    var _twiddle_re: List[Scalar[Self.dtype]]
-    var _twiddle_im: List[Scalar[Self.dtype]]
+    var _twiddles: List[ComplexSIMD[Self.dtype, 1]]
     var _bit_reversal: List[Int]
 
     def __init__(
@@ -51,9 +60,7 @@ struct FFTPlan[dtype: DType](
                 )
             )
         if not _is_power_of_two(size):
-            var lower = 1
-            while lower * 2 < size:
-                lower *= 2
+            var lower = _lower_bounding_power_of_two(size)
             var higher = lower * 2
             raise Error(
                 String(
@@ -66,11 +73,12 @@ struct FFTPlan[dtype: DType](
                     ")",
                 )
             )
+        direction.validate()
+        normalization.validate()
         self._size = size
         self._direction = direction
         self._normalization = normalization
-        self._twiddle_re = List[Scalar[Self.dtype]](capacity=size - 1)
-        self._twiddle_im = List[Scalar[Self.dtype]](capacity=size - 1)
+        self._twiddles = List[ComplexSIMD[Self.dtype, 1]](capacity=size - 1)
         self._bit_reversal = List[Int](length=size, fill=0)
 
         var sign = Scalar[Self.dtype](1.0 if direction.is_inverse() else -1.0)
@@ -85,8 +93,9 @@ struct FFTPlan[dtype: DType](
                     * Scalar[Self.dtype](offset)
                     / Scalar[Self.dtype](stage_size)
                 )
-                self._twiddle_re.append(cos(angle))
-                self._twiddle_im.append(sin(angle))
+                self._twiddles.append(
+                    ComplexSIMD[Self.dtype, 1](cos(angle), sin(angle))
+                )
             stage_size *= 2
 
         var reversed_index = 0
@@ -102,13 +111,18 @@ struct FFTPlan[dtype: DType](
         self._size = copy._size
         self._direction = copy._direction
         self._normalization = copy._normalization
-        self._twiddle_re = List[Scalar[Self.dtype]](copy=copy._twiddle_re)
-        self._twiddle_im = List[Scalar[Self.dtype]](copy=copy._twiddle_im)
+        self._twiddles = List[ComplexSIMD[Self.dtype, 1]](copy=copy._twiddles)
         self._bit_reversal = List[Int](copy=copy._bit_reversal)
 
     def size(self) -> Int:
         """Return the exact number of complex values accepted by this plan."""
         return self._size
+
+    def make_buffer(self) -> List[ComplexSIMD[Self.dtype, 1]]:
+        """Return zero-filled storage sized for `execute` or `execute_in_place`."""
+        return List[ComplexSIMD[Self.dtype, 1]](
+            length=self._size, fill=ComplexSIMD[Self.dtype, 1](0.0)
+        )
 
     def direction(self) -> FFTDirection:
         """Return this plan's transform direction."""
@@ -145,15 +159,34 @@ struct FFTPlan[dtype: DType](
         )
 
     def validate(self) raises:
-        """Validate the stored plan invariants explicitly."""
+        """Validate configuration and table shapes, not numerical table contents."""
         if not _is_power_of_two(self._size):
-            raise Error("FFT plan length must remain a non-zero power of two")
+            raise Error(
+                String(
+                    "FFT plan length must remain a non-zero power of two; got ",
+                    self._size,
+                )
+            )
+        self._direction.validate()
+        self._normalization.validate()
         if (
-            len(self._twiddle_re) != self._size - 1
-            or len(self._twiddle_im) != self._size - 1
+            len(self._twiddles) != self._size - 1
             or len(self._bit_reversal) != self._size
         ):
-            raise Error("FFT plan tables must match the plan length")
+            raise Error(
+                String(
+                    "FFT plan tables must match the plan length; plan length ",
+                    self._size,
+                    " expects complex twiddle length ",
+                    self._size - 1,
+                    ", and bit_reversal length ",
+                    self._size,
+                    "; got complex twiddle length ",
+                    len(self._twiddles),
+                    ", and bit_reversal length ",
+                    len(self._bit_reversal),
+                )
+            )
 
     def _validate_input_length(self, input_length: Int) raises:
         if input_length != self._size:
@@ -180,7 +213,7 @@ struct FFTPlan[dtype: DType](
     def execute_in_place(self, mut values: List[ComplexSIMD[Self.dtype, 1]]) raises:
         """Transform `values` in place without changing its length."""
         self._validate_input_length(len(values))
-        _radix2_in_place(values, self._twiddle_re, self._twiddle_im, self._bit_reversal)
+        _radix2_prefix_in_place(values, self._size, self._twiddles, self._bit_reversal)
         var scale = self._normalization.factor[Self.dtype](self._direction, self._size)
         if scale != Scalar[Self.dtype](1.0):
             for index in range(self._size):

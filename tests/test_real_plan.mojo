@@ -5,7 +5,12 @@ from shuhafft import (
     FFTPlan,
     RealFFTPlan,
 )
+from shuhafft._radix2 import (
+    _radix2_interleaved_in_place,
+    _radix2_interleaved_scalar_in_place,
+)
 from std.complex import ComplexSIMD
+from std.math import cos, sin
 from std.testing import (
     TestSuite,
     assert_almost_equal,
@@ -42,6 +47,85 @@ def _complex_signal[
     for sample in signal:
         values.append(ComplexSIMD[dtype, 1](sample, 0.0))
     return values^
+
+
+def _direct_irfft_none[
+    dtype: DType
+](spectrum: List[ComplexSIMD[dtype, 1]], size: Int) -> List[
+    Float64
+] where dtype.is_floating_point():
+    """Evaluate the unnormalized compact-spectrum inverse definition."""
+    var half_size = size // 2
+    var output = List[Float64](capacity=size)
+    var two_pi = Float64(6.283185307179586476925286766559)
+    for sample_index in range(size):
+        var nyquist_sign = Float64(1.0) if sample_index % 2 == 0 else Float64(-1.0)
+        var value = Float64(spectrum[0].re) + (
+            nyquist_sign * Float64(spectrum[half_size].re)
+        )
+        for bin_index in range(1, half_size):
+            var angle = two_pi * Float64(sample_index * bin_index) / Float64(size)
+            value += Float64(2.0) * (
+                Float64(spectrum[bin_index].re) * cos(angle)
+                - Float64(spectrum[bin_index].im) * sin(angle)
+            )
+        output.append(value)
+    return output^
+
+
+def _assert_inverse_matches_direct[
+    dtype: DType
+](
+    size: Int, seed: UInt64, atol: Float64, rtol: Float64
+) raises where dtype.is_floating_point():
+    var spectrum = List[ComplexSIMD[dtype, 1]](capacity=size // 2 + 1)
+    var state = seed
+    for _ in range(size // 2 + 1):
+        spectrum.append(
+            ComplexSIMD[dtype, 1](
+                Scalar[dtype](_lcg_sample(state)),
+                Scalar[dtype](_lcg_sample(state)),
+            )
+        )
+    var expected = _direct_irfft_none(spectrum, size)
+    var actual = RealFFTPlan[dtype](size, FFTNormalization.NONE).inverse(spectrum)
+    for index in range(size):
+        assert_almost_equal(
+            Float64(actual[index]), expected[index], atol=atol, rtol=rtol
+        )
+
+
+def _assert_interleaved_simd_matches_scalar[
+    dtype: DType
+](
+    size: Int, seed: UInt64, atol: Float64, rtol: Float64
+) raises where dtype.is_floating_point():
+    var plan = RealFFTPlan[dtype](2 * size, FFTNormalization.NONE)
+    var state = seed
+    var scalar_values = List[Scalar[dtype]](capacity=2 * size)
+    for _ in range(2 * size):
+        scalar_values.append(Scalar[dtype](_lcg_sample(state)))
+    var simd_values = List[Scalar[dtype]](copy=scalar_values)
+
+    _radix2_interleaved_scalar_in_place(
+        scalar_values,
+        size,
+        plan._inverse_twiddle_interleaved,
+        plan._inverse_plan._bit_reversal,
+    )
+    _radix2_interleaved_in_place(
+        simd_values,
+        size,
+        plan._inverse_twiddle_interleaved,
+        plan._inverse_plan._bit_reversal,
+    )
+    for index in range(2 * size):
+        assert_almost_equal(
+            Float64(simd_values[index]),
+            Float64(scalar_values[index]),
+            atol=atol,
+            rtol=rtol,
+        )
 
 
 def _assert_real_matches_full_complex_float64(size: Int) raises:
@@ -95,6 +179,45 @@ def test_float32_r2c_agrees_with_full_complex_fft() raises:
         )
 
 
+def test_simd_inverse_matches_direct_dft_arm64_widths() raises:
+    # These powers exercise native 4-lane float32 and 2-lane float64 butterfly
+    # chunks on ARM64, plus their scalar early stages and interleave tails.
+    for size in [8, 16, 32, 64]:
+        _assert_inverse_matches_direct[DType.float32](
+            size, UInt64(0x32D1FF00 + size), 2e-5 * Float64(size), 2e-5
+        )
+        _assert_inverse_matches_direct[DType.float64](
+            size, UInt64(0x64D1FF00 + size), 1e-11, 1e-11
+        )
+
+
+def test_interleaved_simd_matches_scalar_for_float32_and_float64() raises:
+    # Size one exercises an all-scalar stage, while the larger powers cross the
+    # native f32/f64 complex widths and exercise complete SIMD groups.
+    for size in [1, 2, 4, 8, 16, 32, 64]:
+        _assert_interleaved_simd_matches_scalar[DType.float32](
+            size, UInt64(0x32A1B000 + size), 2e-5, 2e-5
+        )
+        _assert_interleaved_simd_matches_scalar[DType.float64](
+            size, UInt64(0x64A1B000 + size), 1e-12, 1e-12
+        )
+
+
+def test_simd_float32_round_trip_arm64_widths() raises:
+    for size in [8, 16, 32, 64]:
+        var original = _random_real[DType.float32](size, UInt64(0x32BACC00 + size))
+        var plan = RealFFTPlan[DType.float32](size)
+        var spectrum = plan.forward(original)
+        var restored = plan.inverse(spectrum)
+        for index in range(size):
+            assert_almost_equal(
+                Float64(restored[index]),
+                Float64(original[index]),
+                atol=2e-5,
+                rtol=2e-5,
+            )
+
+
 def test_forward_contracts_and_exact_endpoint_imaginaries() raises:
     var signal: List[Float64] = [1.0, -2.0, 3.0, 4.0, -1.0, 0.5, 2.5, -3.0]
     var plan = RealFFTPlan[DType.float64](8)
@@ -106,6 +229,27 @@ def test_forward_contracts_and_exact_endpoint_imaginaries() raises:
     assert_equal(spectrum[0].im, 0.0)
     assert_equal(spectrum[4].im, 0.0)
     assert_almost_equal(spectrum[0].re, 5.0, atol=1e-12, rtol=1e-12)
+
+
+def test_plan_buffer_makers_support_forward_into_round_trip() raises:
+    var plan = RealFFTPlan[DType.float64](8)
+    var signal = plan.make_input()
+    var spectrum = plan.make_spectrum()
+    assert_equal(len(signal), plan.size())
+    assert_equal(len(spectrum), plan.spectrum_size())
+    for sample in signal:
+        assert_equal(sample, 0.0)
+    for bin_value in spectrum:
+        assert_equal(bin_value.re, 0.0)
+        assert_equal(bin_value.im, 0.0)
+
+    for index in range(len(signal)):
+        signal[index] = Float64(index) - 3.0
+    plan.forward_into(signal, spectrum)
+    var restored = plan.make_input()
+    plan.inverse_into(spectrum, restored)
+    for index in range(len(signal)):
+        assert_almost_equal(restored[index], signal[index], atol=1e-12, rtol=1e-12)
 
 
 def test_two_sample_special_case() raises:
@@ -166,6 +310,11 @@ def test_constructor_rejects_invalid_real_lengths() raises:
         _ = RealFFTPlan[DType.float64](1000)
 
 
+def test_constructor_rejects_invalid_normalization_discriminant() raises:
+    with assert_raises(contains="normalization discriminant 12 is invalid"):
+        _ = RealFFTPlan[DType.float64](8, FFTNormalization(_value=12))
+
+
 def test_execution_rejects_mismatched_lengths() raises:
     var plan = RealFFTPlan[DType.float64](8)
     var short_signal = List[Float64](length=7, fill=0.0)
@@ -217,8 +366,46 @@ def test_equality_writable_and_validation_contracts() raises:
     assert_equal(String(plan), "RealFFTPlan(size=1024, backward)")
     plan.validate()
     plan._size = 1000
-    with assert_raises(contains="must remain a power of two >= 2"):
+    with assert_raises(contains="must remain a power of two >= 2; got 1000"):
         plan.validate()
+
+    var plan_with_invalid_inner_plan = RealFFTPlan[DType.float64](8)
+    plan_with_invalid_inner_plan._forward_plan._size = 2
+    plan_with_invalid_inner_plan._forward_plan._direction = FFTDirection.INVERSE
+    plan_with_invalid_inner_plan._forward_plan._normalization = (
+        FFTNormalization.BACKWARD
+    )
+    with assert_raises(
+        contains=(
+            "internal plans must match the real plan length; expected half size 4,"
+            " forward direction forward, inverse direction inverse, and"
+            " normalization none; got forward plan (size 2, direction inverse,"
+            " normalization backward) and inverse plan (size 4, direction inverse,"
+            " normalization none)"
+        )
+    ):
+        plan_with_invalid_inner_plan.validate()
+
+    var plan_with_missing_recombination_table = RealFFTPlan[DType.float64](8)
+    plan_with_missing_recombination_table._recombination_twiddle_im = List[Float64]()
+    with assert_raises(
+        contains=(
+            "recombination tables must match the plan length; plan length 8 expects"
+            " half_size + 1 = 5; got recombination_twiddle_re length 5 and"
+            " recombination_twiddle_im length 0"
+        )
+    ):
+        plan_with_missing_recombination_table.validate()
+
+    var plan_with_missing_inverse_twiddles = RealFFTPlan[DType.float64](8)
+    plan_with_missing_inverse_twiddles._inverse_twiddle_interleaved = List[Float64]()
+    with assert_raises(
+        contains=(
+            "inverse interleaved twiddle table must match the plan length; plan"
+            " length 8 expects 6 scalar entries; got 0"
+        )
+    ):
+        plan_with_missing_inverse_twiddles.validate()
 
 
 def test_forward_accepts_span_window() raises:

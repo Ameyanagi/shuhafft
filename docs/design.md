@@ -12,7 +12,9 @@
   reject it explicitly.
 - Establish stored invariants at construction and trust them thereafter.
   Direct mutation of underscore-prefixed fields is out of contract; validated
-  types provide `validate()` for explicit checkpoints.
+  types provide `validate()` for explicit structural checkpoints. Plan
+  validation checks configuration, nested-plan contracts, and table lengths; it
+  does not recompute numerical twiddle, chirp, or spectrum contents.
 - Represent nominal modes as Int-backed structs with `comptime` constants.
 - Accept contiguous buffer inputs as `Span` values so callers can pass windows
   without an intermediate copy.
@@ -29,4 +31,7 @@ procedure are committed. Consumers must not need the generator toolchain.
 
 ## Out of scope
 
-Signal processing, plotting, file formats, GPU kernels, mixed radix, Bluestein, multidimensional transforms, and distributed execution are outside v0.1.
+Signal processing, plotting, file formats, GPU kernels, mixed radix,
+multidimensional transforms, and distributed execution remain outside the
+current package. Bounded Bluestein convolution is included because it preserves
+the existing complex transform contract without adding a backend-selection API.

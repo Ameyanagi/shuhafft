@@ -1,6 +1,7 @@
 from shuhafft import (
     ComplexFloat64,
     FFTDirection,
+    FFTNormalization,
     FFTPlan,
     RealFFTPlan,
     fft,
@@ -41,6 +42,94 @@ def test_fft_matches_plan_and_ifft_round_trip_float64() raises:
     for index in range(len(values)):
         assert_almost_equal(restored[index].re, values[index].re, atol=1e-12)
         assert_almost_equal(restored[index].im, values[index].im, atol=1e-12)
+
+
+def test_real_input_fft_matches_complex_input_and_ifft_round_trip() raises:
+    var real_impulse = List[Float64](length=8, fill=0.0)
+    real_impulse[1] = 1.0
+    var complex_impulse = List[ComplexFloat64](length=8, fill=ComplexFloat64(0.0))
+    complex_impulse[1] = ComplexFloat64(1.0)
+
+    var real_spectrum = fft(real_impulse)
+    var complex_spectrum = fft(complex_impulse)
+    for index in range(len(real_spectrum)):
+        assert_almost_equal(
+            real_spectrum[index].re, complex_spectrum[index].re, atol=1e-12
+        )
+        assert_almost_equal(
+            real_spectrum[index].im, complex_spectrum[index].im, atol=1e-12
+        )
+
+    var inverse = ifft(real_impulse)
+    var restored = fft(inverse)
+    for index in range(len(restored)):
+        assert_almost_equal(restored[index].re, real_impulse[index], atol=1e-12)
+        assert_almost_equal(restored[index].im, 0.0, atol=1e-12)
+
+
+def test_one_shot_normalization_matches_plans() raises:
+    var signal: List[Float64] = [1.0, -2.0, 3.0, 4.0, -1.0, 0.5, 2.5, -3.0]
+    var actual_half_spectrum = rfft(signal, normalization=FFTNormalization.ORTHO)
+    var real_plan = RealFFTPlan[DType.float64](len(signal), FFTNormalization.ORTHO)
+    var expected_half_spectrum = real_plan.forward(signal)
+    for index in range(len(actual_half_spectrum)):
+        assert_almost_equal(
+            actual_half_spectrum[index].re, expected_half_spectrum[index].re, atol=1e-12
+        )
+        assert_almost_equal(
+            actual_half_spectrum[index].im, expected_half_spectrum[index].im, atol=1e-12
+        )
+    var actual_real_inverse = irfft(
+        actual_half_spectrum, normalization=FFTNormalization.ORTHO
+    )
+    var expected_real_inverse = real_plan.inverse(expected_half_spectrum)
+    for index in range(len(actual_real_inverse)):
+        assert_almost_equal(
+            actual_real_inverse[index], expected_real_inverse[index], atol=1e-12
+        )
+
+    var complex_signal = List[ComplexFloat64](capacity=len(signal))
+    for sample in signal:
+        complex_signal.append(ComplexFloat64(sample, 0.0))
+    var forward_plan = FFTPlan[DType.float64](
+        len(signal), FFTDirection.FORWARD, FFTNormalization.ORTHO
+    )
+    var expected_full_spectrum = forward_plan.execute(complex_signal)
+    var actual_complex_fft = fft(complex_signal, normalization=FFTNormalization.ORTHO)
+    var actual_real_fft = fft(signal, normalization=FFTNormalization.ORTHO)
+    for index in range(len(actual_complex_fft)):
+        assert_almost_equal(
+            actual_complex_fft[index].re, expected_full_spectrum[index].re, atol=1e-12
+        )
+        assert_almost_equal(
+            actual_complex_fft[index].im, expected_full_spectrum[index].im, atol=1e-12
+        )
+        assert_almost_equal(
+            actual_real_fft[index].re, expected_full_spectrum[index].re, atol=1e-12
+        )
+        assert_almost_equal(
+            actual_real_fft[index].im, expected_full_spectrum[index].im, atol=1e-12
+        )
+
+    var inverse_plan = FFTPlan[DType.float64](
+        len(signal), FFTDirection.INVERSE, FFTNormalization.ORTHO
+    )
+    var expected_inverse = inverse_plan.execute(complex_signal)
+    var actual_complex_ifft = ifft(complex_signal, normalization=FFTNormalization.ORTHO)
+    var actual_real_ifft = ifft(signal, normalization=FFTNormalization.ORTHO)
+    for index in range(len(actual_complex_ifft)):
+        assert_almost_equal(
+            actual_complex_ifft[index].re, expected_inverse[index].re, atol=1e-12
+        )
+        assert_almost_equal(
+            actual_complex_ifft[index].im, expected_inverse[index].im, atol=1e-12
+        )
+        assert_almost_equal(
+            actual_real_ifft[index].re, expected_inverse[index].re, atol=1e-12
+        )
+        assert_almost_equal(
+            actual_real_ifft[index].im, expected_inverse[index].im, atol=1e-12
+        )
 
 
 def test_rfft_matches_real_plan_float64() raises:
@@ -143,6 +232,23 @@ def test_irfft_rejects_non_power_of_two_implied_length() raises:
         )
     ):
         _ = irfft[DType.float64](spectrum)
+
+
+def test_ifft_accepts_awkward_complex_spectrum_lengths() raises:
+    for size in [5, 6, 11]:
+        var spectrum = List[ComplexFloat64](length=size, fill=ComplexFloat64(0.0))
+        var signal = ifft[DType.float64](spectrum)
+        assert_equal(len(signal), size)
+        for value in signal:
+            assert_equal(value, ComplexFloat64(0.0))
+
+
+def test_real_input_ifft_accepts_awkward_lengths() raises:
+    var real_spectrum = List[Float64](length=5, fill=0.0)
+    var signal = ifft(real_spectrum)
+    assert_equal(len(signal), 5)
+    for value in signal:
+        assert_equal(value, ComplexFloat64(0.0))
 
 
 def main() raises:

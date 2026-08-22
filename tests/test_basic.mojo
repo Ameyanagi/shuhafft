@@ -52,6 +52,28 @@ def test_direction_and_normalization_contracts() raises:
     )
     assert_almost_equal(FFTNormalization.ORTHO.factor[DType.float64](forward, 4), 0.5)
     assert_almost_equal(FFTNormalization.NONE.factor[DType.float64](inverse, 4), 1.0)
+    forward.validate()
+    FFTNormalization.BACKWARD.validate()
+
+
+def test_plan_rejects_invalid_nominal_discriminants() raises:
+    var invalid_direction = FFTDirection(_value=7)
+    with assert_raises(
+        contains=(
+            "direction discriminant 7 is invalid; use FFTDirection.FORWARD (0)"
+            " or FFTDirection.INVERSE (1)"
+        )
+    ):
+        _ = FFTPlan[DType.float64](8, invalid_direction)
+
+    var invalid_normalization = FFTNormalization(_value=-1)
+    with assert_raises(
+        contains=(
+            "normalization discriminant -1 is invalid; use FFTNormalization.NONE"
+            " (0), BACKWARD (1), FORWARD (2), or ORTHO (3)"
+        )
+    ):
+        _ = FFTPlan[DType.float64](8, FFTDirection.FORWARD, invalid_normalization)
 
 
 def test_plan_rejects_invalid_lengths() raises:
@@ -91,42 +113,64 @@ def test_plan_rejects_mismatched_input() raises:
         plan.execute_in_place(values)
 
 
+def test_plan_make_buffer_returns_zero_filled_execution_storage() raises:
+    var plan = FFTPlan[DType.float64](8, FFTDirection.FORWARD)
+    var buffer = plan.make_buffer()
+    assert_true(len(buffer) == plan.size())
+    for value in buffer:
+        _assert_complex64(value, 0.0, 0.0)
+
+    buffer[0] = ComplexFloat64(1.0)
+    plan.execute_in_place(buffer)
+    for value in buffer:
+        _assert_complex64(value, 1.0, 0.0)
+
+
 def test_plan_validate_provides_explicit_invariant_checkpoint() raises:
     var plan = FFTPlan[DType.float64](4, FFTDirection.FORWARD)
     plan.validate()
     plan._size = 3
-    with assert_raises(contains="must remain a non-zero power of two"):
+    with assert_raises(contains="must remain a non-zero power of two; got 3"):
         plan.validate()
 
     var plan_with_missing_table = FFTPlan[DType.float64](4, FFTDirection.FORWARD)
-    plan_with_missing_table._twiddle_im = List[Float64]()
-    with assert_raises(contains="tables must match"):
+    plan_with_missing_table._twiddles = List[ComplexFloat64]()
+    with assert_raises(
+        contains=(
+            "tables must match the plan length; plan length 4 expects complex"
+            " twiddle length 3, and bit_reversal length 4; got complex twiddle"
+            " length 0, and bit_reversal length 4"
+        )
+    ):
         plan_with_missing_table.validate()
+
+    var plan_with_invalid_direction = FFTPlan[DType.float64](4, FFTDirection.FORWARD)
+    plan_with_invalid_direction._direction = FFTDirection(_value=9)
+    with assert_raises(contains="direction discriminant 9 is invalid"):
+        plan_with_invalid_direction.validate()
 
 
 def test_plan_precomputed_state_layout_and_copy_independence() raises:
     var plan = FFTPlan[DType.float64](8, FFTDirection.FORWARD)
-    assert_true(len(plan._twiddle_re) == 7)
-    assert_true(len(plan._twiddle_im) == 7)
+    assert_true(len(plan._twiddles) == 7)
     assert_true(len(plan._bit_reversal) == 8)
     # The stage-size-4 table starts at half - 1 = 1.
-    assert_almost_equal(plan._twiddle_re[1], 1.0)
-    assert_almost_equal(plan._twiddle_im[1], 0.0)
-    assert_almost_equal(plan._twiddle_re[2], 0.0, atol=1e-15)
-    assert_almost_equal(plan._twiddle_im[2], -1.0)
+    assert_almost_equal(plan._twiddles[1].re, 1.0)
+    assert_almost_equal(plan._twiddles[1].im, 0.0)
+    assert_almost_equal(plan._twiddles[2].re, 0.0, atol=1e-15)
+    assert_almost_equal(plan._twiddles[2].im, -1.0)
     var expected_permutation: List[Int] = [0, 4, 2, 6, 1, 5, 3, 7]
     for index in range(8):
         assert_true(plan._bit_reversal[index] == expected_permutation[index])
 
     var plan_copy = FFTPlan[DType.float64](copy=plan)
-    plan_copy._twiddle_re[0] = 2.0
+    plan_copy._twiddles[0] = ComplexFloat64(2.0)
     plan_copy._bit_reversal[0] = 7
-    assert_almost_equal(plan._twiddle_re[0], 1.0)
+    assert_almost_equal(plan._twiddles[0].re, 1.0)
     assert_true(plan._bit_reversal[0] == 0)
 
     var singleton = FFTPlan[DType.float64](1, FFTDirection.FORWARD)
-    assert_true(len(singleton._twiddle_re) == 0)
-    assert_true(len(singleton._twiddle_im) == 0)
+    assert_true(len(singleton._twiddles) == 0)
     assert_true(len(singleton._bit_reversal) == 1)
     assert_true(singleton._bit_reversal[0] == 0)
 
