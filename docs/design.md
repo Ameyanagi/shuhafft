@@ -22,6 +22,19 @@
   first-class data when the domain requires them.
 - Do not add a framework-wide array, executor, renderer, or application model.
 
+## Frequency labels
+
+`fftfreq` and `rfftfreq` accept finite, nonzero sample spacing. Negative spacing
+reverses the frequency signs. NaN, infinity, and zero spacing raise descriptive
+errors. Each non-DC label is computed as `(signed_bin / n) / d` using Float64
+intermediates and then converted to the requested dtype. This avoids an
+overflowing `n * d` or an underflowing shared scale erasing representable bins.
+DC is always exact positive zero, including negative or subnormal spacing.
+
+The APIs retain IEEE rounding at the output boundary: a magnitude beyond the
+dtype's range becomes signed infinity; a magnitude too small to represent
+rounds to signed zero. No finite label is clamped to a different finite value.
+
 ## Tradeoffs
 
 The project accepts a narrower initial feature set in exchange for reviewable
